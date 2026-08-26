@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1C1D1F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Inventario">
+<title>Inventario — Frenos Pala</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icono-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="marca">Frenos <span>Pala</span></div>
+  <select class="bodega-sel" id="selBodega" title="Bodega en la que estás trabajando"></select>
+</header>
+
+<!-- ==================== ESCANEAR ==================== -->
+<div class="pantalla activa" id="p-escanear">
+  <h2 class="titulo">Buscar producto</h2>
+  <p class="sub">Escanea el código de barras, o escribe la referencia</p>
+
+  <div id="camara-caja">
+    <video id="video" playsinline muted autoplay></video>
+    <div class="mira"><i></i></div>
+    <div class="mira-txt">Centra el código dentro del marco</div>
+  </div>
+
+  <button class="btn btn-amarillo" id="btnCamara">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+      <circle cx="12" cy="13" r="4"/></svg>
+    <span id="txtCamara">Abrir cámara</span>
+  </button>
+
+  <div class="diag" id="diagnostico"></div>
+
+  <div class="separador">O ESCRIBE LA REFERENCIA</div>
+
+  <input class="entrada codigo" id="entradaRef" placeholder="K1968-CR" autocomplete="off">
+  <button class="btn btn-linea" style="margin-top:9px;" onclick="buscarEscrito()">Buscar</button>
+
+  <div style="margin-top:22px;">
+    <h2 class="titulo">Últimos consultados</h2>
+    <div id="recientes"></div>
+  </div>
+</div>
+
+<!-- ==================== PRODUCTO ==================== -->
+<div class="pantalla" id="p-producto"></div>
+
+<!-- ==================== MOVIMIENTO ==================== -->
+<div class="pantalla" id="p-movimiento"></div>
+
+<!-- ==================== CATÁLOGO ==================== -->
+<div class="pantalla" id="p-catalogo">
+  <h2 class="titulo">Catálogo</h2>
+  <p class="sub" id="catalogo-sub"></p>
+  <input class="entrada" id="buscarCat" placeholder="Buscar por referencia, nombre o carro..."
+         autocomplete="off" oninput="pintarCatalogo()">
+  <div class="chips" id="chipsCat"></div>
+  <div id="listaCatalogo"></div>
+</div>
+
+<!-- ==================== MOVIMIENTOS ==================== -->
+<div class="pantalla" id="p-movs">
+  <h2 class="titulo">Movimientos</h2>
+  <p class="sub">Todo lo que entra, sale o se traslada queda registrado</p>
+  <div class="chips" id="chipsMovs"></div>
+  <div id="listaMovs"></div>
+</div>
+
+<!-- ==================== INFORMES ==================== -->
+<div class="pantalla" id="p-informes"></div>
+
+<!-- ==================== NAVEGACIÓN ==================== -->
+<nav>
+  <button class="on" data-p="escanear">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 8v8M11 8v8M15 8v8"/></svg>
+    Escanear
+  </button>
+  <button data-p="catalogo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+      <path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>
+    Catálogo
+  </button>
+  <button data-p="movs">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+    Movimientos
+  </button>
+  <button data-p="informes">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+    Informes
+  </button>
+</nav>
+
+<div class="aviso" id="aviso"></div>
+<div id="flash"></div>
+<div id="leido"></div>
+
+<div class="modal" id="modal">
+  <div class="modal-caja" id="modal-caja"></div>
+</div>
+
+<script src="catalogo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
