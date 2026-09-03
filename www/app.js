@@ -482,42 +482,71 @@ function buscarEscrito() {
     pintarCatalogo();
     return;
   }
-  avisar('No se encontró esa referencia', false);
+
+  // No existe: ofrecer crearlo de una vez con esa referencia
+  $('entradaRef').value = '';
+  _codigoEnCurso = null;
+  _refPropuesta  = t.toUpperCase();
+  abrirModal(`
+    <h3>No existe esa referencia</h3>
+    <p class="sub">No hay ningún producto que coincida con lo que escribiste.</p>
+
+    <div style="background:var(--panel2);border-radius:9px;padding:12px;
+                text-align:center;margin-bottom:16px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;
+                  color:var(--yellow);letter-spacing:1px;word-break:break-all;">${t.toUpperCase()}</div>
+    </div>
+
+    <button class="btn btn-amarillo" style="margin-bottom:10px;"
+            onclick="abrirFormNuevoProducto()">
+      ＋ Crear producto nuevo con esta referencia
+    </button>
+    <button class="btn btn-linea" onclick="_refPropuesta=null; cerrarModal();">
+      Cancelar
+    </button>
+  `);
 }
 
 $('entradaRef').addEventListener('keydown', e => {
   if (e.key === 'Enter') buscarEscrito();
 });
 
-// Variable global para pasar el código al formulario sin escapados
+// Variables globales para pasar el código / la referencia al formulario
 let _codigoEnCurso = null;
+let _refPropuesta  = null;
 
 function pedirAsociacion(codigo) {
   _codigoEnCurso = codigo;
   abrirModal(`
-    <h3>Código sin asociar</h3>
-    <p class="sub">Este código no está ligado a ningún producto todavía.</p>
+    <h3>Código nuevo</h3>
+    <p class="sub">Este código todavía no está en el sistema. ¿Qué quieres hacer?</p>
 
     <div style="background:var(--panel2);border-radius:9px;padding:12px;
-                text-align:center;margin-bottom:14px;">
+                text-align:center;margin-bottom:16px;">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:4px;">Código leído</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:16px;
-                  color:var(--yellow);letter-spacing:1px;">${codigo}</div>
+                  color:var(--yellow);letter-spacing:1px;word-break:break-all;">${codigo}</div>
     </div>
 
-    <button class="btn btn-amarillo" style="margin-bottom:16px;font-size:13px;"
+    <button class="btn btn-amarillo" style="margin-bottom:9px;"
             onclick="abrirFormNuevoProducto()">
-      ＋ Crear producto nuevo
+      ＋ Crear producto nuevo con este código
     </button>
-
-    <div style="font-size:11.5px;color:var(--dim);margin-bottom:8px;text-align:center;">
-      — o asociarlo a uno que ya existe —
+    <div style="font-size:11px;color:var(--dim);text-align:center;margin-bottom:16px;">
+      Es un repuesto que aún no existe en el catálogo
     </div>
+
+    <div class="separador">O ASOCIARLO A UNO QUE YA EXISTE</div>
 
     <input class="entrada" id="buscarAsoc" placeholder="Buscar por referencia o nombre..."
            autocomplete="off" oninput="pintarAsociacion()">
-    <div id="listaAsoc" style="margin-top:12px;max-height:38vh;overflow-y:auto;"></div>
+    <div id="listaAsoc" style="margin-top:12px;max-height:32vh;overflow-y:auto;"></div>
+
+    <button class="btn btn-linea" style="margin-top:14px;font-size:12.5px;padding:11px;"
+            onclick="_codigoEnCurso=null; cerrarModal();">
+      Cancelar
+    </button>
   `);
-  setTimeout(() => { const b = $('buscarAsoc'); if (b) b.focus(); }, 250);
   pintarAsociacion();
 }
 
@@ -563,6 +592,14 @@ function abrirFormNuevoProducto() {
   const cats = [...new Set(datos.productos.map(p => p.cat))].sort();
   const b    = bodegaActual();
 
+  // Si el código escaneado parece una referencia (tiene letras), se propone
+  // como referencia. Si es un EAN/UPC de puros números, se deja en blanco
+  // para que el usuario escriba la referencia real del repuesto.
+  const esEAN = _codigoEnCurso && /^\d{8,}$/.test(_codigoEnCurso);
+  const refSugerida = _refPropuesta
+    ? _refPropuesta
+    : (_codigoEnCurso && !esEAN ? _codigoEnCurso : '');
+
   abrirModal(`
     <h3>${_codigoEnCurso ? 'Producto nuevo' : 'Agregar producto'}</h3>
     <p class="sub">Completa los datos. Referencia y nombre son obligatorios.</p>
@@ -570,9 +607,14 @@ function abrirFormNuevoProducto() {
     ${_codigoEnCurso ? `
     <div style="background:var(--panel2);border-radius:9px;padding:10px;
                 text-align:center;margin-bottom:14px;">
-      <div style="font-size:11px;color:var(--dim);margin-bottom:3px;">Código de barras</div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:3px;">
+        Código de barras que se va a asociar
+      </div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:14px;
-                  color:var(--yellow);">${_codigoEnCurso}</div>
+                  color:var(--yellow);word-break:break-all;">${_codigoEnCurso}</div>
+      ${esEAN ? `<div style="font-size:10.5px;color:var(--dim);margin-top:5px;">
+        Es un código de barras comercial. Escribe abajo la referencia del repuesto.
+      </div>` : ''}
     </div>` : ''}
 
     <div style="display:flex;flex-direction:column;gap:11px;">
@@ -581,7 +623,7 @@ function abrirFormNuevoProducto() {
         <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Referencia *</div>
         <input class="entrada" id="npRef" placeholder="Ej: K1234-CR"
                autocomplete="off" style="text-transform:uppercase;"
-               value="${_codigoEnCurso && !/^\d{8,}$/.test(_codigoEnCurso) ? _codigoEnCurso : ''}">
+               value="${refSugerida}">
       </div>
 
       <div>
@@ -682,8 +724,11 @@ function guardarNuevoProducto() {
   if (window.SB) window.SB.subirProductoNuevo(nuevo);
 
   _codigoEnCurso = null;
+  _refPropuesta  = null;
   cerrarModal();
-  avisar(`Producto "${nombre}" agregado al catálogo`);
+  avisar(codigo
+    ? `Producto creado y código asociado. La próxima vez se abre solo.`
+    : `Producto "${nombre}" agregado al catálogo`);
   abrirProducto(nuevo);
 }
 
@@ -1489,8 +1534,13 @@ function abrirDatos() {
       </div>
     </div>
 
-    <button class="btn btn-amarillo" onclick="abrirInventarioCompleto()">
-      📋 Ver inventario completo
+    <button class="btn btn-amarillo" style="margin-bottom:9px;"
+            onclick="elegirFormatoDescarga('inventario')">
+      ⬇ Descargar inventario (PDF o Excel)
+    </button>
+
+    <button class="btn btn-linea" onclick="abrirInventarioCompleto()">
+      📋 Ver inventario completo en pantalla
     </button>
 
     <div class="separador">COPIA DE SEGURIDAD</div>
@@ -1509,6 +1559,9 @@ function abrirDatos() {
     <button class="btn btn-linea" onclick="descargarDatos()" style="margin-bottom:10px;">
       Descargar copia técnica (JSON)
     </button>
+    <div style="font-size:11px;color:var(--dim);text-align:center;margin:-4px 0 12px;">
+      Guarda todo (productos, movimientos y códigos) para poder restaurarlo
+    </div>
     <input type="file" id="archivoRest" accept=".json" style="display:none"
            onchange="restaurarDatos(this)">
     <button class="btn btn-linea" onclick="document.getElementById('archivoRest').click()">
@@ -1597,22 +1650,119 @@ function abrirInventarioCompleto() {
         📊 Excel
       </button>
     </div>
+    <button class="btn btn-linea" style="margin-top:9px;font-size:12.5px;padding:11px;"
+            onclick="descargarLosDos()">
+      Descargar los dos
+    </button>
   `);
 }
 
-function descargarInventarioPDF() {
-  if (!window.jspdf) {
-    avisar('La librería PDF no se cargó. Revisa tu conexión.', false);
+/**
+ * Pregunta en qué formato se quiere el archivo antes de descargar.
+ * origen: 'inventario' (PDF/Excel) o 'copia' (PDF/Excel/JSON técnico)
+ */
+function elegirFormatoDescarga(origen = 'inventario') {
+  const filas = _obtenerDatosInventario();
+  const unidades = filas.reduce((s, f) => s + f.cantidad, 0);
+
+  abrirModal(`
+    <h3>Descargar inventario</h3>
+    <p class="sub">${filas.length} productos · ${unidades.toLocaleString('es-CO')} unidades.
+       Elige en qué formato lo quieres.</p>
+
+    <button class="btn btn-amarillo" style="margin-bottom:9px;"
+            onclick="descargarInventarioPDF()">
+      📄 Descargar en PDF
+    </button>
+    <div style="font-size:11px;color:var(--dim);text-align:center;margin-bottom:16px;">
+      Para imprimir o enviar por WhatsApp
+    </div>
+
+    <button class="btn btn-verde" style="margin-bottom:9px;"
+            onclick="descargarInventarioExcel()">
+      📊 Descargar en Excel
+    </button>
+    <div style="font-size:11px;color:var(--dim);text-align:center;margin-bottom:16px;">
+      Para editar, filtrar o pasar al contador
+    </div>
+
+    <button class="btn btn-linea" style="margin-bottom:9px;font-size:12.5px;"
+            onclick="descargarLosDos()">
+      Descargar los dos (PDF + Excel)
+    </button>
+
+    ${origen === 'copia' ? `
+    <div class="separador">RESPALDO TÉCNICO</div>
+    <button class="btn btn-linea" style="font-size:12.5px;" onclick="descargarDatos()">
+      Copia completa (JSON) — para restaurar la app
+    </button>` : ''}
+
+    <button class="btn btn-linea" style="margin-top:14px;font-size:12.5px;padding:11px;"
+            onclick="cerrarModal()">
+      Cancelar
+    </button>
+  `);
+}
+
+/** Muestra el resultado real de la descarga, con botón para abrir el archivo. */
+function _avisarDescarga(res, nombre) {
+  if (!res || !res.ok) {
+    abrirModal(`
+      <h3>No se pudo guardar</h3>
+      <p class="sub">${(res && res.error) || 'Ocurrió un error inesperado.'}</p>
+      <button class="btn btn-linea" onclick="cerrarModal()">Entendido</button>
+    `);
     return;
   }
+
+  const puedeAbrir = res.nativo && res.uri;
+  abrirModal(`
+    <h3>✓ Descarga completa</h3>
+    <p class="sub">El archivo quedó guardado en tu teléfono.</p>
+
+    <div style="background:var(--panel2);border-radius:9px;padding:13px;margin-bottom:16px;">
+      <div style="font-size:13px;font-weight:600;word-break:break-all;margin-bottom:5px;">
+        ${nombre}
+      </div>
+      <div style="font-size:11.5px;color:var(--dim);">📁 ${res.ruta}</div>
+    </div>
+
+    ${puedeAbrir ? `
+    <button class="btn btn-amarillo" style="margin-bottom:9px;"
+            onclick="Descargas.abrir(${JSON.stringify(res.uri)}, ${JSON.stringify(res.mime)})">
+      Abrir archivo
+    </button>` : ''}
+
+    <button class="btn btn-linea" onclick="cerrarModal()">Listo</button>
+  `);
+}
+
+/** Cede el hilo un instante para que se alcance a pintar el aviso en pantalla. */
+function _respirar() {
+  return new Promise(r => setTimeout(r, 60));
+}
+
+function _nombreArchivo(ext) {
+  const f = new Date();
+  const dd = String(f.getDate()).padStart(2, '0');
+  const mm = String(f.getMonth() + 1).padStart(2, '0');
+  const hh = String(f.getHours()).padStart(2, '0');
+  const mi = String(f.getMinutes()).padStart(2, '0');
+  return `inventario-frenospala-${f.getFullYear()}-${mm}-${dd}_${hh}${mi}.${ext}`;
+}
+
+// ---------------- PDF ----------------
+
+/** Construye el PDF y devuelve el blob (sin descargarlo). */
+function _construirPDF() {
+  if (!window.jspdf) throw new Error('La librería para PDF no cargó. Cierra y vuelve a abrir la app.');
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
   const filas = _obtenerDatosInventario();
   const fecha = new Date();
-  const fechaStr = `${fecha.getDate()}/${fecha.getMonth()+1}/${fecha.getFullYear()} ${fecha.toTimeString().slice(0,5)}`;
+  const fechaStr = `${fecha.getDate()}/${fecha.getMonth() + 1}/${fecha.getFullYear()} ${fecha.toTimeString().slice(0, 5)}`;
 
-  // Encabezado
   doc.setFontSize(18);
   doc.setFont('helvetica', 'bold');
   doc.text('Inventario — Frenos Pala', 14, 20);
@@ -1621,24 +1771,28 @@ function descargarInventarioPDF() {
   doc.text(`Fecha: ${fechaStr}`, 14, 27);
   doc.text(`${filas.length} productos`, 14, 32);
 
-  // Tabla con agrupación por categoría
   const cuerpo = [];
   let catActual = '';
   filas.forEach(f => {
     if (f.cat !== catActual) {
       catActual = f.cat;
-      cuerpo.push([{ content: f.cat, colSpan: 3, styles: { fontStyle: 'bold', fillColor: [44, 44, 40], textColor: [242, 183, 5], fontSize: 9 } }]);
+      cuerpo.push([{
+        content: f.cat, colSpan: 3,
+        styles: { fontStyle: 'bold', fillColor: [44, 44, 40], textColor: [242, 183, 5], fontSize: 9 }
+      }]);
     }
     cuerpo.push([f.nombre, f.ref, { content: String(f.cantidad), styles: { halign: 'center', fontStyle: 'bold' } }]);
   });
 
-  // Total
   const totalUnidades = filas.reduce((s, f) => s + f.cantidad, 0);
   cuerpo.push([
     { content: 'Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
     { content: String(totalUnidades), styles: { halign: 'center', fontStyle: 'bold' } }
   ]);
 
+  if (typeof doc.autoTable !== 'function') {
+    throw new Error('El complemento de tablas del PDF no cargó. Cierra y vuelve a abrir la app.');
+  }
   doc.autoTable({
     startY: 36,
     head: [['Producto', 'Referencia', 'Cant.']],
@@ -1651,123 +1805,146 @@ function descargarInventarioPDF() {
       2: { cellWidth: 20, halign: 'center' }
     },
     theme: 'grid',
-    margin: { left: 14, right: 14 }
+    margin: { left: 14, right: 14 },
+    didDrawPage: (d) => {
+      const pag = doc.internal.getNumberOfPages();
+      doc.setFontSize(8);
+      doc.setTextColor(130);
+      doc.text(`Página ${pag}`, d.settings.margin.left, doc.internal.pageSize.getHeight() - 8);
+    }
   });
 
-  const nombreArchivo = `inventario-frenospala-${fecha.toISOString().slice(0,10)}.pdf`;
+  return doc.output('blob');
+}
 
+async function descargarInventarioPDF() {
+  const nombre = _nombreArchivo('pdf');
+  avisar('Generando PDF...');
+  await _respirar();
   try {
-    const blob = doc.output('blob');
-    _descargarArchivo(blob, nombreArchivo);
-    avisar('PDF descargado');
-  } catch(e) {
-    // Fallback: abrir en nueva pestaña
-    doc.save(nombreArchivo);
-    avisar('PDF descargado');
+    const blob = _construirPDF();
+    const res = await Descargas.guardar(blob, nombre, 'pdf');
+    _avisarDescarga(res, nombre);
+  } catch (e) {
+    _avisarDescarga({ ok: false, error: e.message }, nombre);
   }
 }
 
-function descargarInventarioExcel() {
-  if (!window.XLSX) {
-    avisar('La librería Excel no se cargó. Revisa tu conexión.', false);
-    return;
-  }
+// ---------------- Excel ----------------
+
+/** Construye el Excel y devuelve el blob (sin descargarlo). */
+function _construirExcel() {
+  if (!window.XLSX) throw new Error('La librería para Excel no cargó. Cierra y vuelve a abrir la app.');
 
   const filas = _obtenerDatosInventario();
   const fecha = new Date();
-  const fechaStr = `${fecha.getDate()}/${fecha.getMonth()+1}/${fecha.getFullYear()}`;
+  const fechaStr = `${fecha.getDate()}/${fecha.getMonth() + 1}/${fecha.getFullYear()}`;
 
-  // Construir datos para la hoja
   const datosHoja = [
     ['Inventario — Frenos Pala'],
     [`Fecha: ${fechaStr}`],
     [],
     ['Categoría', 'Producto', 'Referencia', 'Cantidad']
   ];
+  filas.forEach(f => datosHoja.push([f.cat, f.nombre, f.ref, f.cantidad]));
 
-  filas.forEach(f => {
-    datosHoja.push([f.cat, f.nombre, f.ref, f.cantidad]);
-  });
-
-  // Fila de total
   const totalUnidades = filas.reduce((s, f) => s + f.cantidad, 0);
   datosHoja.push([]);
   datosHoja.push(['', '', 'TOTAL', totalUnidades]);
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(datosHoja);
-
-  // Ajustar anchos de columna
-  ws['!cols'] = [
-    { wch: 20 },  // Categoría
-    { wch: 45 },  // Producto
-    { wch: 20 },  // Referencia
-    { wch: 12 }   // Cantidad
-  ];
-
+  ws['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 20 }, { wch: 12 }];
   XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
 
-  const nombreArchivo = `inventario-frenospala-${fecha.toISOString().slice(0,10)}.xlsx`;
+  // Segunda hoja: detalle por bodega
+  const detalle = [['Referencia', 'Producto', 'Categoría', 'Marca',
+                    ...BODEGAS.map(b => `Bodega ${b}`), 'Total']];
+  datos.productos.forEach(p => {
+    detalle.push([p.ref, p.nombre, p.cat, p.marca || '',
+      ...BODEGAS.map(b => (p.stock[b] === null ? 'sin contar' : p.stock[b])),
+      stockTotal(p)]);
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(detalle);
+  ws2['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 18 }, { wch: 12 },
+                  ...BODEGAS.map(() => ({ wch: 11 })), { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Por bodega');
 
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  return new Blob([wbout], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  });
+}
+
+async function descargarInventarioExcel() {
+  const nombre = _nombreArchivo('xlsx');
+  avisar('Generando Excel...');
+  await _respirar();
   try {
-    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    _descargarArchivo(blob, nombreArchivo);
-    avisar('Excel descargado');
-  } catch(e) {
-    // Fallback directo
-    XLSX.writeFile(wb, nombreArchivo);
-    avisar('Excel descargado');
+    const blob = _construirExcel();
+    const res = await Descargas.guardar(blob, nombre, 'xlsx');
+    _avisarDescarga(res, nombre);
+  } catch (e) {
+    _avisarDescarga({ ok: false, error: e.message }, nombre);
   }
 }
 
-/** Helper de descarga que funciona en web y en Capacitor/Android */
-function _descargarArchivo(blob, nombre) {
-  // Método 1: Capacitor Filesystem (si está disponible)
-  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) {
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64 = reader.result.split(',')[1];
-        await window.Capacitor.Plugins.Filesystem.writeFile({
-          path: nombre,
-          data: base64,
-          directory: 'DOCUMENTS',
-          recursive: true
-        });
-        avisar('Guardado en Documentos');
-      } catch(e) {
-        console.warn('Filesystem falló, usando descarga web:', e);
-        _descargarWeb(blob, nombre);
-      }
-    };
-    reader.readAsDataURL(blob);
-    return;
+// ---------------- Los dos a la vez ----------------
+
+async function descargarLosDos() {
+  avisar('Generando los dos archivos...');
+  await _respirar();
+  const nPdf = _nombreArchivo('pdf');
+  const nXls = _nombreArchivo('xlsx');
+  try {
+    const r1 = await Descargas.guardar(_construirPDF(), nPdf, 'pdf');
+    const r2 = await Descargas.guardar(_construirExcel(), nXls, 'xlsx');
+
+    if (!r1.ok || !r2.ok) {
+      _avisarDescarga({ ok: false, error: (r1.error || r2.error) }, nPdf);
+      return;
+    }
+
+    abrirModal(`
+      <h3>✓ Descarga completa</h3>
+      <p class="sub">Los dos archivos quedaron guardados en tu teléfono.</p>
+
+      <div style="background:var(--panel2);border-radius:9px;padding:13px;margin-bottom:10px;">
+        <div style="font-size:13px;font-weight:600;word-break:break-all;">📄 ${nPdf}</div>
+      </div>
+      <div style="background:var(--panel2);border-radius:9px;padding:13px;margin-bottom:14px;">
+        <div style="font-size:13px;font-weight:600;word-break:break-all;">📊 ${nXls}</div>
+      </div>
+      <div style="font-size:11.5px;color:var(--dim);margin-bottom:16px;">📁 ${r1.ruta}</div>
+
+      ${r1.nativo && r1.uri ? `
+      <button class="btn btn-amarillo" style="margin-bottom:8px;"
+              onclick="Descargas.abrir(${JSON.stringify(r1.uri)}, ${JSON.stringify(r1.mime)})">
+        Abrir el PDF
+      </button>
+      <button class="btn btn-verde" style="margin-bottom:8px;"
+              onclick="Descargas.abrir(${JSON.stringify(r2.uri)}, ${JSON.stringify(r2.mime)})">
+        Abrir el Excel
+      </button>` : ''}
+
+      <button class="btn btn-linea" onclick="cerrarModal()">Listo</button>
+    `);
+  } catch (e) {
+    _avisarDescarga({ ok: false, error: e.message }, nPdf);
   }
-
-  // Método 2: Web estándar
-  _descargarWeb(blob, nombre);
 }
 
-function _descargarWeb(blob, nombre) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = nombre;
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, 250);
-}
+// ---------------- Copia técnica (JSON) ----------------
 
-function descargarDatos() {
-  const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
-  const nombre = `inventario-frenospala-${new Date().toISOString().slice(0,10)}.json`;
-  _descargarArchivo(blob, nombre);
-  avisar('Copia descargada');
+async function descargarDatos() {
+  const nombre = _nombreArchivo('json');
+  try {
+    const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
+    const res = await Descargas.guardar(blob, nombre, 'json');
+    _avisarDescarga(res, nombre);
+  } catch (e) {
+    _avisarDescarga({ ok: false, error: e.message }, nombre);
+  }
 }
 
 function restaurarDatos(input) {

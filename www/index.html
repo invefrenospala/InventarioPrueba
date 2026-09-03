@@ -17,11 +17,10 @@
 <link rel="stylesheet" href="styles.css">
 <!-- SDK de Supabase (sincronización en la nube) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<!-- jsPDF + autoTable para exportar inventario a PDF -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.4/jspdf.plugin.autotable.min.js"></script>
-<!-- SheetJS para exportar inventario a Excel -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<!-- jsPDF + autoTable (PDF) y SheetJS (Excel) — LOCALES, funcionan sin internet -->
+<script src="vendor/jspdf.umd.min.js"></script>
+<script src="vendor/jspdf.plugin.autotable.min.js"></script>
+<script src="vendor/xlsx.core.min.js"></script>
 </head>
 <body>
 
@@ -64,7 +63,7 @@
   </div>
 
   <button class="btn btn-linea" style="margin-top:16px;font-size:13px;padding:13px;"
-          onclick="_codigoEnCurso=null; abrirFormNuevoProducto()">
+          onclick="_codigoEnCurso=null; _refPropuesta=null; abrirFormNuevoProducto()">
     ＋ Agregar producto nuevo
   </button>
 </div>
@@ -129,6 +128,7 @@
   <div class="modal-caja" id="modal-caja"></div>
 </div>
 
+<script src="descargas.js"></script>
 <script src="catalogo.js"></script>
 <script src="supabase.js"></script>
 <script src="app.js"></script>

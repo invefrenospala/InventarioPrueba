@@ -10,6 +10,7 @@ const ARCHIVOS = [
   'app.js',
   'catalogo.js',
   'supabase.js',
+  'descargas.js',
   'styles.css',
   'manifest.json',
   'icono-192.png',
@@ -30,6 +31,19 @@ for (const archivo of ARCHIVOS) {
   } else {
     console.warn(`  ⚠ No encontrado: ${archivo}`);
   }
+}
+
+// Carpeta vendor/ (jsPDF, autoTable y SheetJS locales)
+const vendorSrc  = path.join(__dirname, 'vendor');
+const vendorDest = path.join(www, 'vendor');
+if (fs.existsSync(vendorSrc)) {
+  if (!fs.existsSync(vendorDest)) fs.mkdirSync(vendorDest, { recursive: true });
+  for (const f of fs.readdirSync(vendorSrc)) {
+    fs.copyFileSync(path.join(vendorSrc, f), path.join(vendorDest, f));
+    copiados++;
+  }
+} else {
+  console.warn('  ⚠ No encontrada la carpeta vendor/');
 }
 
 console.log(`✓ ${copiados} archivos copiados a www/`);
