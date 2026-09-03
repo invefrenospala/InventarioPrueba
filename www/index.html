@@ -78,17 +78,20 @@
 <div class="pantalla" id="p-catalogo">
   <h2 class="titulo">Catálogo</h2>
   <p class="sub" id="catalogo-sub"></p>
-  <input class="entrada" id="buscarCat" placeholder="Buscar por referencia, nombre o carro..."
-         autocomplete="off" oninput="pintarCatalogo()">
-  <div class="chips" id="chipsCat"></div>
-  <div id="listaCatalogo"></div>
+  <div class="filtros">
+    <input class="entrada" id="buscarCat" placeholder="Buscar por referencia, nombre o carro..."
+           autocomplete="off" oninput="pintarCatalogo()">
+    <div class="filtros-tit">Filtrar por</div>
+    <div class="chips" id="chipsCat"></div>
+  </div>
+  <div id="listaCatalogo" style="margin-top:14px;"></div>
 </div>
 
 <!-- ==================== MOVIMIENTOS ==================== -->
 <div class="pantalla" id="p-movs">
   <h2 class="titulo">Movimientos</h2>
   <p class="sub">Todo lo que entra, sale o se traslada queda registrado</p>
-  <div class="chips" id="chipsMovs"></div>
+  <div class="chips chips-sep" id="chipsMovs"></div>
   <div id="listaMovs"></div>
 </div>
 

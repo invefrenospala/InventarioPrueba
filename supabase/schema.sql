@@ -22,7 +22,9 @@ CREATE TABLE productos (
   cat      TEXT         NOT NULL DEFAULT '',
   nombre   TEXT         NOT NULL DEFAULT '',
   marca    TEXT         NOT NULL DEFAULT '',
-  precio   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  precio   NUMERIC(12,2) NOT NULL DEFAULT 0,  -- venta sin IVA
+  costo    NUMERIC(12,2) NOT NULL DEFAULT 0,  -- compra sin IVA
+  activo   BOOLEAN      NOT NULL DEFAULT TRUE, -- FALSE = descontinuado
   minimo   INT          NOT NULL DEFAULT 0,
   stock    JSONB        NOT NULL DEFAULT '{"1":null,"2":null,"3":null,"4":null,"5":null}',
   CONSTRAINT productos_pkey PRIMARY KEY (ref)

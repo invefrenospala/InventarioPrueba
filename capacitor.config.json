@@ -1,17 +1,19 @@
 {
-  "appId":   "com.frenospala.inventario",
+  "appId": "com.frenospala.inventario",
   "appName": "Inventario Frenos Pala",
-  "webDir":  "www",
+  "webDir": "www",
   "server": {
     "androidScheme": "https"
   },
   "android": {
     "allowMixedContent": false,
-    "minWebViewVersion": 60
+    "minWebViewVersion": 60,
+    "backgroundColor": "#1C1D1F"
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 0
     }
-  }
+  },
+  "backgroundColor": "#1C1D1F"
 }

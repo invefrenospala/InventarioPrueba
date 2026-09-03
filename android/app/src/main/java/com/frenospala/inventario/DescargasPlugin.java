@@ -7,7 +7,9 @@ import android.app.PendingIntent;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.app.DownloadManager;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -92,13 +94,22 @@ public class DescargasPlugin extends Plugin {
         String mime = call.getString("mime", "application/octet-stream");
         String datos = call.getString("datos", "");
         JSONObject r = guardarInterno(getContext(), nombre, mime, datos);
-        call.resolve(JSObject.fromJSONObject(r));
+        responder(call, r);
     }
 
     @PluginMethod
     public void abrir(PluginCall call) {
         JSONObject r = abrirInterno(getContext(), call.getString("uri", ""), call.getString("mime", "*/*"));
-        call.resolve(JSObject.fromJSONObject(r));
+        responder(call, r);
+    }
+
+    /** Convierte el JSONObject a JSObject capturando la excepcion obligatoria. */
+    private void responder(PluginCall call, JSONObject r) {
+        try {
+            call.resolve(JSObject.fromJSONObject(r));
+        } catch (Exception e) {
+            call.reject(r.optString("error", "Error al guardar el archivo"));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -173,19 +184,66 @@ public class DescargasPlugin extends Plugin {
     private static JSONObject abrirInterno(Context ctx, String uri, String mime) {
         JSONObject r = new JSONObject();
         try {
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            i.setDataAndType(Uri.parse(uri), mime);
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-            ctx.startActivity(Intent.createChooser(i, "Abrir con")
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            r.put("ok", true);
+            Intent ver = new Intent(Intent.ACTION_VIEW);
+            ver.setDataAndType(Uri.parse(uri), mime);
+            ver.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            // ¿Hay alguna app instalada capaz de abrir este tipo de archivo?
+            boolean hayApp = ctx.getPackageManager()
+                    .queryIntentActivities(ver, PackageManager.MATCH_DEFAULT_ONLY)
+                    .size() > 0;
+
+            if (hayApp) {
+                Intent selector = Intent.createChooser(ver, "Abrir con");
+                selector.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                ctx.startActivity(selector);
+                r.put("ok", true);
+                return r;
+            }
+
+            // Nadie puede abrirlo: al menos llevarlo a la carpeta de Descargas
+            if (abrirCarpetaDescargas(ctx)) {
+                r.put("ok", true);
+                r.put("aviso", "Ninguna app puede abrir este archivo. "
+                        + "Te llevé a la carpeta Descargas.");
+                return r;
+            }
+
+            r.put("ok", false);
+            r.put("error", mensajeSinApp(mime));
         } catch (Exception e) {
             try {
                 r.put("ok", false);
-                r.put("error", "No hay ninguna app para abrir este archivo");
+                r.put("error", mensajeSinApp(mime));
             } catch (Exception ignored) {}
         }
         return r;
+    }
+
+    /** Abre la pantalla de Descargas del sistema. */
+    private static boolean abrirCarpetaDescargas(Context ctx) {
+        try {
+            Intent i = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static String mensajeSinApp(String mime) {
+        if (mime != null && mime.contains("pdf")) {
+            return "No tienes ninguna app para abrir PDF. El archivo está guardado "
+                    + "en Descargas/" + CARPETA + ".";
+        }
+        if (mime != null && mime.contains("spreadsheet")) {
+            return "No tienes ninguna app para abrir Excel. El archivo está guardado "
+                    + "en Descargas/" + CARPETA + ".";
+        }
+        return "Ninguna app puede abrir este archivo. Está guardado en Descargas/"
+                + CARPETA + ".";
     }
 
     // ------------------------------------------------------------------

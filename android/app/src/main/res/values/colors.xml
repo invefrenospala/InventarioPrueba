@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Identidad Frenos Pala: asfalto y amarillo -->
+    <color name="fp_asfalto">#1C1D1F</color>
+    <color name="fp_panel">#26282B</color>
+    <color name="fp_amarillo">#F2B705</color>
+</resources>

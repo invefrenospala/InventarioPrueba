@@ -57,7 +57,7 @@ async function cargarProductosDesdeSupabase() {
   try {
     const { data, error } = await sbClient.from('productos').select('*');
     if (error) throw error;
-    return data; // array de objetos con { ref, cat, nombre, marca, precio, minimo, stock }
+    return data; // array con { ref, cat, nombre, marca, precio, costo, minimo, stock }
   } catch(e) {
     console.warn('No se pudo cargar productos de Supabase:', e.message);
     return null;
@@ -265,6 +265,8 @@ async function subirProductoNuevo(producto) {
       nombre: producto.nombre,
       marca:  producto.marca  || '',
       precio: producto.precio || 0,
+      costo:  producto.costo  || 0,
+      activo: producto.activo !== false,
       minimo: producto.minimo || 0,
       stock:  producto.stock
     });
@@ -292,6 +294,8 @@ async function actualizarProducto(producto, refAnterior) {
         nombre: producto.nombre,
         marca:  producto.marca  || '',
         precio: producto.precio || 0,
+        costo:  producto.costo  || 0,
+        activo: producto.activo !== false,
         minimo: producto.minimo || 0,
         stock:  producto.stock
       });
@@ -305,6 +309,8 @@ async function actualizarProducto(producto, refAnterior) {
           nombre: producto.nombre,
           marca:  producto.marca  || '',
           precio: producto.precio || 0,
+          costo:  producto.costo  || 0,
+          activo: producto.activo !== false,
         })
         .eq('ref', producto.ref);
       if (error) throw error;
@@ -312,6 +318,25 @@ async function actualizarProducto(producto, refAnterior) {
     console.log('Producto actualizado en Supabase:', producto.ref);
   } catch(e) {
     console.warn('Error actualizando producto en Supabase:', e.message);
+  }
+}
+
+// ==========================================================
+// ELIMINAR PRODUCTO
+// ==========================================================
+
+/**
+ * Borra un producto de Supabase. Las tablas movimientos y barras tienen
+ * ON DELETE CASCADE, así que sus filas se van con él automáticamente.
+ */
+async function eliminarProductoSupabase(ref) {
+  if (!sbConfigurado) return;
+  try {
+    const { error } = await sbClient.from('productos').delete().eq('ref', ref);
+    if (error) throw error;
+    console.log('Producto eliminado de Supabase:', ref);
+  } catch(e) {
+    console.warn('Error eliminando producto en Supabase:', e.message);
   }
 }
 
@@ -326,6 +351,7 @@ window.SB = {
   subirBarra,
   subirProductoNuevo,
   actualizarProducto,
+  eliminarProducto:   eliminarProductoSupabase,
   escucharCambios:    escucharCambiosEnTiempoReal,
   actualizarIndicador,
   get pendientes()    { return colaPendiente.length; },

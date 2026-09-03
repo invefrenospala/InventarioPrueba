@@ -9,6 +9,13 @@ const BODEGAS = [1, 2, 3, 4, 5];
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 const CLAVE = 'frenospala_inventario_v1';
 
+// IVA colombiano. Los precios se guardan SIN IVA (base gravable) y el IVA
+// se calcula al mostrarlo. Así, si mañana cambia la tarifa, se cambia aquí
+// y no hay que volver a digitar 164 precios.
+const IVA = 0.19;
+const conIVA  = n => (n || 0) * (1 + IVA);
+const sinIVA  = n => (n || 0) / (1 + IVA);
+
 // ---------- Estado ----------
 let datos = {
   productos: [],     // catálogo con existencias por bodega
@@ -42,6 +49,11 @@ async function cargar() {
 
   if (previo && Array.isArray(previo.productos) && previo.productos.length) {
     datos = Object.assign(datos, previo);
+    // Productos guardados antes de que existiera el precio de compra
+    datos.productos.forEach(p => {
+      if (typeof p.costo  !== 'number')  p.costo  = 0;
+      if (typeof p.activo !== 'boolean') p.activo = true;
+    });
     // Por si el catálogo del archivo creció desde la última vez
     const conocidas = new Set(datos.productos.map(p => p.ref));
     CATALOGO.forEach(c => {
@@ -73,6 +85,8 @@ async function cargar() {
             stock:  remoto.stock,
             minimo: remoto.minimo,
             precio: remoto.precio,
+            costo:  typeof remoto.costo === 'number' ? remoto.costo : (local.costo || 0),
+            activo: remoto.activo !== false,
           };
         });
 
@@ -82,7 +96,8 @@ async function cargar() {
           if (!refsLocales.has(r.ref)) {
             datos.productos.push({
               ref: r.ref, cat: r.cat, nombre: r.nombre,
-              marca: r.marca, precio: r.precio,
+              marca: r.marca, precio: r.precio, costo: r.costo || 0,
+              activo: r.activo !== false,
               minimo: r.minimo, stock: r.stock
             });
           }
@@ -133,8 +148,10 @@ function nuevoProducto(c) {
     cat: c.cat,
     nombre: c.nombre,
     marca: c.marca || '',
-    precio: c.precio || 0,
+    precio: c.precio || 0,   // precio de VENTA sin IVA
+    costo:  c.costo  || 0,   // precio de COMPRA sin IVA (lo que se le paga al proveedor)
     minimo: 0,          // lo define el taller con el uso
+    activo: true,       // false = descontinuado (ya no se pide, pero queda el historial)
     stock
   };
 }
@@ -154,6 +171,17 @@ function avisar(texto, ok = true) {
   avisar._t = setTimeout(() => a.classList.remove('ver'), 2800);
 }
 
+/**
+ * Escapa un texto para poder meterlo dentro de un atributo HTML entre comillas
+ * dobles. Sin esto, un valor con comillas (o un content:// URI) parte el
+ * atributo y el onclick queda truncado, así que el botón no hace nada.
+ */
+function attr(t) {
+  return String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function normalizar(t) {
   return String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
@@ -163,6 +191,9 @@ function buscarPorRef(texto) {
   if (!n) return null;
   return datos.productos.find(p => normalizar(p.ref) === n) || null;
 }
+
+/** Productos que siguen en uso (no descontinuados). */
+const activos = () => datos.productos.filter(p => p.activo !== false);
 
 function stockTotal(p) {
   return BODEGAS.reduce((s, b) => s + (p.stock[b] || 0), 0);
@@ -565,7 +596,7 @@ function pintarAsociacion() {
   $('listaAsoc').innerHTML = lista.length === 0
     ? '<div class="vacio">Sin resultados</div>'
     : lista.map(p => `
-      <div class="item" onclick="asociar(${JSON.stringify(codigo)},${JSON.stringify(p.ref)})">
+      <div class="item" onclick="asociar('${attr(codigo).replace(/'/g, "\\'")}','${attr(p.ref).replace(/'/g, "\\'")}')">
         <div class="izq">
           <div class="t">${p.nombre}</div>
           <div class="s">${p.ref}${p.marca ? ' · ' + p.marca : ''}</div>
@@ -654,10 +685,27 @@ function abrirFormNuevoProducto() {
                autocomplete="off">
       </div>
 
-      <div>
-        <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Precio de venta sin IVA (opcional)</div>
-        <input class="entrada" id="npPrecio" type="number" min="0" step="1"
-               placeholder="0" inputmode="numeric">
+      <div class="bloque-precios">
+        <div class="bloque-tit">Precios (opcional)</div>
+
+        <div style="margin-bottom:10px;">
+          <div class="etiqueta">Precio de compra — lo que le pagas al proveedor</div>
+          <input class="entrada" id="npCosto" type="number" min="0" step="1"
+                 placeholder="0" inputmode="numeric" oninput="_previewPrecios('np')">
+        </div>
+
+        <div>
+          <div class="etiqueta">Precio de venta</div>
+          <input class="entrada" id="npPrecio" type="number" min="0" step="1"
+                 placeholder="0" inputmode="numeric" oninput="_previewPrecios('np')">
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="npIncluyeIva" onchange="_previewPrecios('np')">
+          <span>Los precios que escribí <b>ya incluyen IVA</b> del ${Math.round(IVA*100)}%</span>
+        </label>
+
+        <div id="npPreview" class="preview"></div>
       </div>
 
       <div>
@@ -676,6 +724,39 @@ function abrirFormNuevoProducto() {
   `);
 }
 
+/**
+ * Muestra en vivo cómo quedan los precios y el margen mientras se escriben.
+ * pre = 'np' (nuevo) o 'ep' (editar)
+ */
+function _previewPrecios(pre) {
+  const caja = $(pre + 'Preview');
+  if (!caja) return;
+
+  const incluye = $(pre + 'IncluyeIva') && $(pre + 'IncluyeIva').checked;
+  const crudoC  = parseFloat($(pre + 'Costo')  ? $(pre + 'Costo').value  : '') || 0;
+  const crudoV  = parseFloat($(pre + 'Precio') ? $(pre + 'Precio').value : '') || 0;
+
+  const costo  = incluye ? sinIVA(crudoC) : crudoC;
+  const precio = incluye ? sinIVA(crudoV) : crudoV;
+
+  if (!costo && !precio) { caja.innerHTML = ''; return; }
+
+  const margen = (costo && precio) ? ((precio - costo) / precio) * 100 : null;
+  const colorM = margen === null ? 'var(--dim)'
+               : margen < 0  ? 'var(--red)'
+               : margen < 15 ? 'var(--orange)' : 'var(--green-l)';
+
+  caja.innerHTML = `
+    <div class="preview-fila"><span>Compra sin IVA</span><b>${pesos(costo)}</b></div>
+    <div class="preview-fila"><span>Venta sin IVA</span><b>${pesos(precio)}</b></div>
+    <div class="preview-fila"><span>Venta con IVA (${Math.round(IVA*100)}%)</span>
+         <b style="color:var(--yellow)">${pesos(conIVA(precio))}</b></div>
+    ${margen !== null ? `<div class="preview-fila" style="border-top:1px solid var(--line);
+         margin-top:6px;padding-top:6px;">
+      <span>Margen</span><b style="color:${colorM}">${margen.toFixed(1)}%</b></div>` : ''}
+  `;
+}
+
 function toggleCatNueva(val) {
   const div = document.getElementById('npCatNuevaDiv');
   if (div) div.style.display = val === '_nueva' ? 'block' : 'none';
@@ -689,7 +770,12 @@ function guardarNuevoProducto() {
   const catNueva = $('npCatNueva') ? $('npCatNueva').value.trim().toUpperCase() : '';
   const cat      = catSel === '_nueva' ? catNueva : catSel;
   const marca    = $('npMarca')  ? $('npMarca').value.trim()   : '';
-  const precio   = parseFloat($('npPrecio') ? $('npPrecio').value : '') || 0;
+  const incluye  = $('npIncluyeIva') && $('npIncluyeIva').checked;
+  const precioIn = parseFloat($('npPrecio') ? $('npPrecio').value : '') || 0;
+  const costoIn  = parseFloat($('npCosto')  ? $('npCosto').value  : '') || 0;
+  // Siempre se guarda la base sin IVA
+  const precio   = incluye ? sinIVA(precioIn) : precioIn;
+  const costo    = incluye ? sinIVA(costoIn)  : costoIn;
   const stockRaw = $('npStock')  ? $('npStock').value.trim()   : '';
   const b        = bodegaActual();
 
@@ -708,7 +794,7 @@ function guardarNuevoProducto() {
   if (stockRaw !== '') stock[b] = Math.max(0, parseInt(stockRaw) || 0);
 
   // Crear el objeto producto
-  const nuevo = { ref, cat, nombre, marca, precio, minimo: 0, stock };
+  const nuevo = { ref, cat, nombre, marca, precio, costo, minimo: 0, stock };
   datos.productos.push(nuevo);
 
   // Asociar el código de barras si venía del escáner
@@ -786,11 +872,29 @@ function abrirEditarProducto() {
                value="${p.marca || ''}">
       </div>
 
-      <div>
-        <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Precio de venta sin IVA (opcional)</div>
-        <input class="entrada" id="epPrecio" type="number" min="0" step="1"
-               placeholder="0" inputmode="numeric"
-               value="${p.precio || ''}">
+      <div class="bloque-precios">
+        <div class="bloque-tit">Precios — se guardan sin IVA</div>
+
+        <div style="margin-bottom:10px;">
+          <div class="etiqueta">Precio de compra — lo que le pagas al proveedor</div>
+          <input class="entrada" id="epCosto" type="number" min="0" step="1"
+                 placeholder="0" inputmode="numeric"
+                 value="${p.costo ? Math.round(p.costo) : ''}" oninput="_previewPrecios('ep')">
+        </div>
+
+        <div>
+          <div class="etiqueta">Precio de venta</div>
+          <input class="entrada" id="epPrecio" type="number" min="0" step="1"
+                 placeholder="0" inputmode="numeric"
+                 value="${p.precio ? Math.round(p.precio) : ''}" oninput="_previewPrecios('ep')">
+        </div>
+
+        <label class="check">
+          <input type="checkbox" id="epIncluyeIva" onchange="_previewPrecios('ep')">
+          <span>Los precios que escribí <b>ya incluyen IVA</b> del ${Math.round(IVA*100)}%</span>
+        </label>
+
+        <div id="epPreview" class="preview"></div>
       </div>
     </div>
 
@@ -817,7 +921,11 @@ function guardarEdicionProducto() {
   const catNueva = $('epCatNueva') ? $('epCatNueva').value.trim().toUpperCase() : '';
   const cat      = catSel === '_nueva' ? catNueva : catSel;
   const marca    = $('epMarca') ? $('epMarca').value.trim() : '';
-  const precio   = parseFloat($('epPrecio') ? $('epPrecio').value : '') || 0;
+  const incluye  = $('epIncluyeIva') && $('epIncluyeIva').checked;
+  const precioIn = parseFloat($('epPrecio') ? $('epPrecio').value : '') || 0;
+  const costoIn  = parseFloat($('epCosto')  ? $('epCosto').value  : '') || 0;
+  const precio   = incluye ? sinIVA(precioIn) : precioIn;
+  const costo    = incluye ? sinIVA(costoIn)  : costoIn;
 
   // Validaciones
   if (!ref)    { avisar('La referencia es obligatoria', false); return; }
@@ -836,6 +944,7 @@ function guardarEdicionProducto() {
   p.cat    = cat;
   p.marca  = marca;
   p.precio = precio;
+  p.costo  = costo;
 
   // Si cambió la referencia, actualizar asociaciones de códigos de barras
   if (ref !== refAnterior) {
@@ -863,6 +972,134 @@ function guardarEdicionProducto() {
   cerrarModal();
   avisar(`Producto "${nombre}" actualizado`);
   abrirProducto(p);
+}
+
+
+// ==========================================================
+// DAR DE BAJA / ELIMINAR UN PRODUCTO
+// ==========================================================
+// Hay dos caminos, y la diferencia importa:
+//
+//   · DESCONTINUAR: el producto sale del catálogo y de las sugerencias de
+//     compra, pero su historial de movimientos, sus conteos y sus códigos de
+//     barras quedan intactos. Es reversible. Esto es lo que se necesita el 95%
+//     de las veces: el proveedor dejó de traerlo, pero lo que pasó el año
+//     pasado sigue siendo cierto y hace falta para los informes.
+//
+//   · ELIMINAR: borra el producto y TODO su rastro. Solo tiene sentido cuando
+//     el producto se creó por error. Si tiene movimientos, se exige escribir la
+//     referencia para confirmar, porque borrarlo deja huecos en el historial.
+
+function abrirQuitarProducto() {
+  const p = productoActual;
+  if (!p) return;
+
+  const movs  = datos.movimientos.filter(m => m.ref === p.ref).length;
+  const cods  = Object.keys(datos.barras).filter(c => datos.barras[c] === p.ref).length;
+  const hay   = stockTotal(p);
+
+  abrirModal(`
+    <h3>Dar de baja</h3>
+    <p class="sub">${p.nombre}</p>
+
+    <div style="background:var(--panel2);border-radius:9px;padding:12px;margin-bottom:16px;">
+      <div class="preview-fila"><span>Existencias</span><b>${hay} unidades</b></div>
+      <div class="preview-fila"><span>Movimientos registrados</span><b>${movs}</b></div>
+      <div class="preview-fila"><span>Códigos de barras</span><b>${cods}</b></div>
+    </div>
+
+    <button class="btn btn-amarillo" style="margin-bottom:8px;"
+            onclick="descontinuarProducto()">
+      Descontinuar
+    </button>
+    <div style="font-size:11px;color:var(--dim);line-height:1.55;margin-bottom:18px;">
+      Sale del catálogo y de las sugerencias de compra. El historial y las
+      existencias se conservan. <b>Se puede deshacer.</b>
+    </div>
+
+    <div class="separador">O BORRARLO DEL TODO</div>
+
+    ${hay > 0 ? `<div class="nota" style="margin-bottom:12px;">
+      <span>⚠️</span>
+      <div>Todavía hay <b>${hay} unidades</b> en bodega. Si lo borras, esas
+      unidades desaparecen del inventario y del valor total.</div>
+    </div>` : ''}
+
+    <div style="font-size:11px;color:var(--dim);line-height:1.55;margin-bottom:10px;">
+      Borra el producto, sus ${movs} movimiento${movs === 1 ? '' : 's'} y sus
+      ${cods} código${cods === 1 ? '' : 's'} de barras. <b style="color:var(--red)">No se
+      puede deshacer.</b> Úsalo solo si el producto se creó por error.
+    </div>
+
+    ${movs > 0 ? `
+    <div class="etiqueta">Escribe <b style="color:var(--ink)">${p.ref}</b> para confirmar</div>
+    <input class="entrada codigo" id="confirmarBorrado" placeholder="${p.ref}"
+           autocomplete="off" style="margin-bottom:10px;">` : ''}
+
+    <button class="btn btn-rojo" style="font-size:12.5px;"
+            onclick="eliminarProducto()">
+      Eliminar definitivamente
+    </button>
+
+    <button class="btn btn-linea" style="margin-top:14px;font-size:12.5px;padding:11px;"
+            onclick="cerrarModal()">Cancelar</button>
+  `);
+}
+
+function descontinuarProducto() {
+  const p = productoActual;
+  if (!p) return;
+  p.activo = false;
+  guardar();
+  if (window.SB) window.SB.actualizarProducto(p, p.ref);
+  cerrarModal();
+  avisar(`"${p.nombre}" quedó descontinuado`);
+  abrirProducto(p);
+}
+
+function reactivarProducto() {
+  const p = productoActual;
+  if (!p) return;
+  p.activo = true;
+  guardar();
+  if (window.SB) window.SB.actualizarProducto(p, p.ref);
+  avisar(`"${p.nombre}" vuelve a estar activo`);
+  abrirProducto(p);
+}
+
+function eliminarProducto() {
+  const p = productoActual;
+  if (!p) return;
+
+  const movs = datos.movimientos.filter(m => m.ref === p.ref).length;
+
+  // Con historial de por medio, se exige escribir la referencia
+  if (movs > 0) {
+    const escrito = $('confirmarBorrado') ? $('confirmarBorrado').value.trim() : '';
+    if (normalizar(escrito) !== normalizar(p.ref)) {
+      avisar('Escribe la referencia exacta para confirmar', false);
+      return;
+    }
+  } else if (!confirm(`¿Eliminar "${p.nombre}" del catálogo?`)) {
+    return;
+  }
+
+  const ref = p.ref, nombre = p.nombre;
+
+  datos.productos   = datos.productos.filter(x => x.ref !== ref);
+  datos.movimientos = datos.movimientos.filter(m => m.ref !== ref);
+  datos.recientes   = datos.recientes.filter(r => r !== ref);
+  Object.keys(datos.barras).forEach(c => {
+    if (datos.barras[c] === ref) delete datos.barras[c];
+  });
+
+  guardar();
+  if (window.SB) window.SB.eliminarProducto(ref);
+
+  productoActual = null;
+  cerrarModal();
+  avisar(`"${nombre}" eliminado del catálogo`);
+  ir('catalogo');
 }
 
 // ==========================================================
@@ -914,11 +1151,40 @@ function abrirProducto(p) {
         <span>Total en las 5 bodegas</span>
         <b>${total}</b>
       </div>
-      ${p.precio ? `<div class="total-linea" style="border-top:1px solid var(--line);">
-        <span>Precio de venta (sin IVA)</span>
-        <b>${pesos(p.precio)}</b>
+      ${(p.precio || p.costo) ? `
+      ${p.costo ? `<div class="total-linea" style="border-top:1px solid var(--line);">
+        <span>Compra <i style="color:var(--dim);font-style:normal;">sin IVA</i></span>
+        <b style="color:var(--ink)">${pesos(p.costo)}</b>
       </div>` : ''}
+      ${p.precio ? `<div class="total-linea" style="border-top:1px solid var(--line);">
+        <span>Venta <i style="color:var(--dim);font-style:normal;">sin IVA</i></span>
+        <b style="color:var(--ink)">${pesos(p.precio)}</b>
+      </div>
+      <div class="total-linea" style="border-top:1px solid var(--line);">
+        <span>Venta <i style="color:var(--dim);font-style:normal;">con IVA ${Math.round(IVA*100)}%</i></span>
+        <b>${pesos(conIVA(p.precio))}</b>
+      </div>` : ''}
+      ${(p.precio && p.costo) ? (() => {
+        const m = ((p.precio - p.costo) / p.precio) * 100;
+        const c = m < 0 ? 'var(--red)' : m < 15 ? 'var(--orange)' : 'var(--green-l)';
+        return `<div class="total-linea" style="border-top:1px solid var(--line);">
+          <span>Margen</span>
+          <b style="color:${c}">${m.toFixed(1)}%</b>
+        </div>`;
+      })() : ''}
+      ${!p.costo ? `<div class="total-linea" style="border-top:1px solid var(--line);">
+        <span style="color:var(--orange);font-size:11.5px;">Falta el precio de compra</span>
+        <b style="font-size:11.5px;color:var(--dim);">—</b>
+      </div>` : ''}
+      ` : ''}
     </div>
+
+    ${p.activo === false ? `<div class="nota nota-baja">
+      <span>📦</span>
+      <div><b>Producto descontinuado.</b> No aparece en el catálogo ni en las
+      sugerencias de compra, pero su historial y sus existencias siguen guardados.
+      <button class="mini" onclick="reactivarProducto()">Volver a activarlo</button></div>
+    </div>` : ''}
 
     ${sinContar.length ? `<div class="nota">
       <span>⚠️</span>
@@ -955,8 +1221,12 @@ function abrirProducto(p) {
         : 'Todavía no tiene código de barras asociado. Escanéalo una vez y quedará ligado.'}</div>
     </div>
 
-    <button class="btn btn-linea" style="margin-top:10px;font-size:12.5px;padding:12px;"
-            onclick="abrirEditarProducto()">✏️ Editar producto</button>
+    <div class="acciones" style="margin-top:10px;">
+      <button class="btn btn-linea" style="font-size:12.5px;padding:12px;"
+              onclick="abrirEditarProducto()">✏️ Editar</button>
+      <button class="btn btn-linea" style="font-size:12.5px;padding:12px;"
+              onclick="abrirQuitarProducto()">🗑️ Dar de baja</button>
+    </div>
 
     <h2 class="titulo" style="margin-top:18px;">Últimos movimientos</h2>
     <div>${pintarMovsDe(p.ref, 8)}</div>
@@ -1181,20 +1451,31 @@ function guardarConteo() {
 let filtroCat = 'TODOS';
 
 function pintarCatalogo() {
-  const cats = ['TODOS', ...new Set(datos.productos.map(p => p.cat))];
+  const cats = ['TODOS', ...new Set(activos().map(p => p.cat))];
   $('chipsCat').innerHTML = cats.map(c =>
     `<button class="${c === filtroCat ? 'on' : ''}" onclick="filtrarCat('${c}')">
       ${c === 'TODOS' ? 'Todos' : c}
     </button>`).join('') +
     `<button class="${filtroCat === '_SIN' ? 'on' : ''}" onclick="filtrarCat('_SIN')">Sin código</button>` +
     `<button class="${filtroCat === '_CERO' ? 'on' : ''}" onclick="filtrarCat('_CERO')">Agotados</button>` +
-    `<button class="${filtroCat === '_NC' ? 'on' : ''}" onclick="filtrarCat('_NC')">Sin contar</button>`;
+    `<button class="${filtroCat === '_NC' ? 'on' : ''}" onclick="filtrarCat('_NC')">Sin contar</button>` +
+    (() => {
+      const nBaja = datos.productos.filter(p => p.activo === false).length;
+      return nBaja ? `<button class="${filtroCat === '_BAJA' ? 'on' : ''}"
+        onclick="filtrarCat('_BAJA')">Descontinuados (${nBaja})</button>` : '';
+    })();
 
   const q = $('buscarCat').value.trim().toUpperCase();
   const b = bodegaActual();
-  let lista = datos.productos;
 
-  if (filtroCat === '_SIN') {
+  // Por defecto el catálogo muestra solo lo que se sigue pidiendo
+  let lista = filtroCat === '_BAJA'
+    ? datos.productos.filter(p => p.activo === false)
+    : activos();
+
+  if (filtroCat === '_BAJA') {
+    // el filtro ya se aplicó arriba
+  } else if (filtroCat === '_SIN') {
     const conCodigo = new Set(Object.values(datos.barras));
     lista = lista.filter(p => !conCodigo.has(p.ref));
   } else if (filtroCat === '_CERO') {
@@ -1213,10 +1494,13 @@ function pintarCatalogo() {
       (p.marca || '').toUpperCase().includes(q));
   }
 
-  const sinContar = datos.productos.filter(p => contadas(p) < BODEGAS.length).length;
+  const act = activos();
+  const sinContar = act.filter(p => contadas(p) < BODEGAS.length).length;
+  const nBaja = datos.productos.length - act.length;
   $('catalogo-sub').innerHTML =
-    `${datos.productos.length} referencias · ${lista.length} mostradas` +
-    (sinContar ? `<br>${sinContar} sin contar en todas las bodegas` : '');
+    `${act.length} referencias activas · ${lista.length} mostradas` +
+    (sinContar ? `<br>${sinContar} sin contar en todas las bodegas` : '') +
+    (nBaja ? `<br>${nBaja} descontinuada${nBaja === 1 ? '' : 's'} (ocultas)` : '');
 
   $('listaCatalogo').innerHTML = lista.length === 0
     ? '<div class="vacio">No hay productos que coincidan</div>'
@@ -1224,9 +1508,9 @@ function pintarCatalogo() {
         const v = p.stock[b];
         const total = stockTotal(p);
         const color = v === null ? '#5C5B57' : (v > 0 ? 'var(--green-l)' : 'var(--red)');
-        return `<div class="item" onclick="abrirRef('${p.ref}')">
+        return `<div class="item ${p.activo === false ? 'baja' : ''}" onclick="abrirRef('${p.ref}')">
           <div class="izq">
-            <div class="t">${p.nombre}</div>
+            <div class="t">${p.activo === false ? '📦 ' : ''}${p.nombre}</div>
             <div class="s">${p.ref}${p.marca ? ' · ' + p.marca : ''}</div>
           </div>
           <div class="der">
@@ -1236,12 +1520,12 @@ function pintarCatalogo() {
         </div>`;
       }).join('') +
       (lista.length > 200 ? `<div class="vacio">Mostrando 200 de ${lista.length}. Afina la búsqueda.</div>` : '') +
-      `<div style="padding:18px 0 4px;text-align:center;">
+      (filtroCat === '_BAJA' ? '' : `<div style="padding:18px 0 4px;text-align:center;">
         <button class="btn btn-linea" style="font-size:13px;padding:12px 22px;"
-                onclick="_codigoEnCurso=null; abrirFormNuevoProducto()">
+                onclick="_codigoEnCurso=null; _refPropuesta=null; abrirFormNuevoProducto()">
           ＋ Agregar producto nuevo al catálogo
         </button>
-      </div>`;
+      </div>`);
 }
 
 function filtrarCat(c) {
@@ -1343,13 +1627,16 @@ function pintarInformes() {
   const totalSalidas = salidas.reduce((s, m) => s + m.cantidad, 0);
   const totalEntradas = entradas.reduce((s, m) => s + m.cantidad, 0);
 
-  const valor = datos.productos.reduce((s, p) => s + stockTotal(p) * (p.precio || 0), 0);
+  const valor  = datos.productos.reduce((s, p) => s + stockTotal(p) * (p.precio || 0), 0);
+  const costoT = datos.productos.reduce((s, p) => s + stockTotal(p) * (p.costo  || 0), 0);
+  const sinCostoCat = activos().filter(p => !p.costo).length;
   const unidades = datos.productos.reduce((s, p) => s + stockTotal(p), 0);
   // Agotado = se contó en alguna bodega y de verdad no hay.
   // Un producto que nunca se ha contado NO está agotado: no se sabe cuánto hay.
-  const agotados = datos.productos.filter(p =>
+  const agotados = activos().filter(p =>
     contadas(p) > 0 && stockTotal(p) === 0).length;
-  const nuncaContados = datos.productos.filter(p => contadas(p) === 0).length;
+  const nuncaContados = activos().filter(p => contadas(p) === 0).length;
+  const descontinuados = datos.productos.filter(p => p.activo === false).length;
   const sinCodigo = datos.productos.length - new Set(Object.values(datos.barras)).size;
 
   // Ranking de los que más salen
@@ -1367,22 +1654,33 @@ function pintarInformes() {
 
     <div class="tarjetas">
       <div class="tarjeta">
-        <div class="n" style="font-size:17px;">${pesos(valor)}</div>
-        <div class="e">Valor del inventario<br>(precio de venta sin IVA)</div>
+        <div class="n" style="font-size:16px;">${pesos(valor)}</div>
+        <div class="e">Valor a precio de venta<br>(sin IVA)</div>
+      </div>
+      <div class="tarjeta">
+        <div class="n" style="font-size:16px;color:var(--ink);">${pesos(costoT)}</div>
+        <div class="e">Valor a precio de compra<br>${sinCostoCat ? `(faltan ${sinCostoCat} refs)` : '(sin IVA)'}</div>
       </div>
       <div class="tarjeta">
         <div class="n">${unidades.toLocaleString('es-CO')}</div>
         <div class="e">Unidades en total<br>en las 5 bodegas</div>
       </div>
       <div class="tarjeta">
-        <div class="n">${datos.productos.length}</div>
-        <div class="e">Referencias<br>en el catálogo</div>
+        <div class="n">${activos().length}</div>
+        <div class="e">Referencias activas<br>${descontinuados ? `(${descontinuados} descontinuadas)` : 'en el catálogo'}</div>
       </div>
       <div class="tarjeta">
         <div class="n" style="color:${agotados ? 'var(--red)' : 'var(--green-l)'}">${agotados}</div>
         <div class="e">Agotados<br>(contados y en cero)</div>
       </div>
     </div>
+
+    ${sinCostoCat ? `<div class="nota">
+      <span>💰</span>
+      <div><b>${sinCostoCat}</b> de ${activos().length} referencias activas no tienen
+      precio de compra. Sin ese dato no se puede calcular cuánto hay que invertir
+      para reponerlas. Se agrega en cada producto con <b>✎ Editar</b>.</div>
+    </div>` : ''}
 
     ${nuncaContados ? `<div class="nota">
       <span>📋</span>
@@ -1436,9 +1734,10 @@ function pintarInformes() {
           <div class="barra"><i style="width:${(r.n / ranking[0].n) * 100}%"></i></div>
         </div>`).join('')}
 
-    <h2 class="titulo" style="margin-top:24px;">Qué conviene comprar</h2>
-    <p class="sub">Cantidad sugerida según lo que se ha consumido</p>
-    <div class="chips">
+    <h2 class="titulo" style="margin-top:26px;">Qué conviene comprar</h2>
+    <p class="sub">Cantidad e inversión según lo que se ha consumido.
+       Elige para cuánto tiempo quieres cubrirte:</p>
+    <div class="chips chips-sep">
       ${[1,3,6].map(n => `<button class="${mesesCobertura === n ? 'on' : ''}"
         onclick="cambiarCobertura(${n})">${n} ${n === 1 ? 'mes' : 'meses'}</button>`).join('')}
     </div>
@@ -1461,32 +1760,67 @@ function cambiarCobertura(n) {
   pintarInformes();
 }
 
-function sugerencias() {
-  const conConsumo = datos.productos
+/** Calcula qué conviene pedir y cuánto cuesta. Devuelve la lista y los totales. */
+function _calcularPedido() {
+  const lista = activos()
     .map(p => {
       const c = consumoMensual(p.ref);
       if (c === 0) return null;
       const reserva = Math.ceil(c * 0.3);
       const hay = stockTotal(p);
       const pedir = Math.max(0, c * mesesCobertura + reserva - hay);
-      return { p, c, reserva, hay, pedir };
+      return { p, c, reserva, hay, pedir, inversion: pedir * (p.costo || 0) };
     })
     .filter(Boolean)
-    .sort((a, b) => b.pedir - a.pedir);
+    .filter(x => x.pedir > 0)
+    .sort((a, b) => b.inversion - a.inversion || b.pedir - a.pedir);
 
-  if (conConsumo.length === 0) {
+  const inversion  = lista.reduce((s, x) => s + x.inversion, 0);
+  const unidades   = lista.reduce((s, x) => s + x.pedir, 0);
+  const sinCosto   = lista.filter(x => !x.p.costo).length;
+
+  return { lista, inversion, unidades, sinCosto };
+}
+
+function sugerencias() {
+  const hayConsumo = activos().some(p => consumoMensual(p.ref) > 0);
+
+  if (!hayConsumo) {
     return `<div class="vacio">Todavía no hay consumo registrado.<br>
       Después de unas semanas de uso, aquí aparecerá cuánto conviene pedir
-      de cada producto.</div>`;
+      de cada producto y cuánto hay que invertir.</div>`;
   }
 
-  const conPedido = conConsumo.filter(x => x.pedir > 0);
-  if (conPedido.length === 0) {
+  const { lista, inversion, unidades, sinCosto } = _calcularPedido();
+
+  if (lista.length === 0) {
     return `<div class="vacio">Con las existencias actuales alcanza para los
       próximos ${mesesCobertura} ${mesesCobertura === 1 ? 'mes' : 'meses'}.</div>`;
   }
 
-  return conPedido.slice(0, 15).map(x => `
+  const meses = `${mesesCobertura} ${mesesCobertura === 1 ? 'mes' : 'meses'}`;
+
+  // ---- Resumen de inversión ----
+  const resumen = `
+    <div class="inversion">
+      <div class="inv-tit">Inversión estimada para ${meses}</div>
+      <div class="inv-monto">${pesos(inversion)}</div>
+      <div class="inv-sub">
+        ${unidades.toLocaleString('es-CO')} unidades ·
+        ${lista.length} referencias · precios de compra sin IVA
+      </div>
+      <div class="inv-iva">
+        Con IVA del ${Math.round(IVA * 100)}%: <b>${pesos(conIVA(inversion))}</b>
+      </div>
+      ${sinCosto ? `<div class="inv-alerta">
+        ⚠️ ${sinCosto} ${sinCosto === 1 ? 'referencia no tiene' : 'referencias no tienen'}
+        precio de compra, así que ${sinCosto === 1 ? 'no está' : 'no están'} sumando.
+        La inversión real es mayor.
+      </div>` : ''}
+    </div>`;
+
+  // ---- Detalle por producto ----
+  const detalle = lista.slice(0, 15).map(x => `
     <div class="tarjeta" style="margin-bottom:9px;">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
         <div style="min-width:0;flex:1;">
@@ -1500,15 +1834,29 @@ function sugerencias() {
           <div style="font-size:8.5px;color:var(--dim);letter-spacing:1px;">PEDIR</div>
         </div>
       </div>
-      <div style="font-size:11px;color:var(--dim);line-height:1.55;margin-top:9px;
-                  padding-top:9px;border-top:1px solid var(--line);">
-        Salen <b style="color:var(--ink)">${x.c} al mes</b>. Para ${mesesCobertura}
-        ${mesesCobertura === 1 ? 'mes' : 'meses'} hacen falta
-        <b style="color:var(--ink)">${x.c * mesesCobertura}</b>, más
+
+      <div style="display:flex;justify-content:space-between;align-items:center;
+                  margin-top:10px;padding-top:9px;border-top:1px solid var(--line);">
+        <span style="font-size:11px;color:var(--dim);">Costo de este pedido</span>
+        ${x.p.costo
+          ? `<b style="font-family:'JetBrains Mono',monospace;font-size:14px;">${pesos(x.inversion)}</b>`
+          : `<span style="font-size:11px;color:var(--orange);">sin precio de compra</span>`}
+      </div>
+
+      <div style="font-size:11px;color:var(--dim);line-height:1.55;margin-top:8px;">
+        Salen <b style="color:var(--ink)">${x.c} al mes</b>. Para ${meses}
+        hacen falta <b style="color:var(--ink)">${x.c * mesesCobertura}</b>, más
         <b style="color:var(--ink)">${x.reserva}</b> de reserva.
         Hay <b style="color:var(--ink)">${x.hay}</b> entre todas las bodegas.
       </div>
     </div>`).join('');
+
+  const masDe15 = lista.length > 15
+    ? `<div class="vacio" style="padding:14px;font-size:12px;">
+         Mostrando las 15 de mayor inversión, de ${lista.length} en total.</div>`
+    : '';
+
+  return resumen + detalle + masDe15;
 }
 
 // ==========================================================
@@ -1581,11 +1929,14 @@ function abrirDatos() {
 
 function _obtenerDatosInventario() {
   // Agrupar por categoría y ordenar
-  const cats = [...new Set(datos.productos.map(p => p.cat))].sort();
+  // El inventario incluye los descontinuados que aún tienen existencias:
+  // esa mercancía sigue siendo del negocio y hay que verla en el conteo.
+  const universo = datos.productos.filter(p => p.activo !== false || stockTotal(p) > 0);
+  const cats = [...new Set(universo.map(p => p.cat))].sort();
   const filas = [];
 
   cats.forEach(cat => {
-    const prods = datos.productos
+    const prods = universo
       .filter(p => p.cat === cat)
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
 
@@ -1594,7 +1945,10 @@ function _obtenerDatosInventario() {
         cat,
         nombre: p.nombre,
         ref: p.ref,
-        cantidad: stockTotal(p)
+        cantidad: stockTotal(p),
+        costo: p.costo || 0,
+        precio: p.precio || 0,
+        baja: p.activo === false
       });
     });
   });
@@ -1612,12 +1966,12 @@ function abrirInventarioCompleto() {
     let cabecera = '';
     if (f.cat !== catActual) {
       catActual = f.cat;
-      cabecera = `<tr class="inv-cat"><td colspan="3">${f.cat}</td></tr>`;
+      cabecera = `<tr class="inv-cat"><td colspan="3">${f.cat}</td></tr>`;  // 3 columnas
     }
     return cabecera + `<tr>
-      <td>${f.nombre}</td>
-      <td class="inv-ref">${f.ref}</td>
+      <td>${f.nombre}<div class="inv-ref">${f.ref}</div></td>
       <td class="inv-cant">${f.cantidad}</td>
+      <td class="inv-cant" style="font-size:10.5px;">${f.costo ? pesos(f.costo) : '—'}</td>
     </tr>`;
   }).join('');
 
@@ -1630,14 +1984,15 @@ function abrirInventarioCompleto() {
     <div class="inv-tabla-caja">
       <table class="inv-tabla">
         <thead>
-          <tr><th>Producto</th><th>Ref.</th><th>Cant.</th></tr>
+          <tr><th>Producto</th><th>Cant.</th><th>Compra</th></tr>
         </thead>
         <tbody>
           ${filasHTML}
         </tbody>
         <tfoot>
-          <tr><td colspan="2" style="text-align:right;font-weight:600;">Total</td>
-              <td class="inv-cant" style="font-weight:700;">${totalUnidades.toLocaleString('es-CO')}</td></tr>
+          <tr><td style="text-align:right;font-weight:600;">Total</td>
+              <td class="inv-cant" style="font-weight:700;">${totalUnidades.toLocaleString('es-CO')}</td>
+              <td class="inv-cant" style="font-weight:700;font-size:10.5px;">${pesos(filas.reduce((a,f)=>a+f.costo*f.cantidad,0))}</td></tr>
         </tfoot>
       </table>
     </div>
@@ -1704,6 +2059,22 @@ function elegirFormatoDescarga(origen = 'inventario') {
   `);
 }
 
+// Archivos recién guardados. Se guardan aquí en vez de incrustar el URI en el
+// HTML: un content:// dentro de un onclick rompe el atributo.
+let _archivosDescargados = [];
+
+/** Abre uno de los archivos que se acaban de guardar. */
+async function _abrirDescargado(i) {
+  const a = _archivosDescargados[i];
+  if (!a || !a.uri) { avisar('No se encontró el archivo', false); return; }
+  const r = await Descargas.abrir(a.uri, a.mime);
+  if (!r || !r.ok) {
+    avisar(r && r.error ? r.error : 'No hay ninguna app para abrir este archivo', false);
+  } else if (r.aviso) {
+    avisar(r.aviso);
+  }
+}
+
 /** Muestra el resultado real de la descarga, con botón para abrir el archivo. */
 function _avisarDescarga(res, nombre) {
   if (!res || !res.ok) {
@@ -1716,6 +2087,7 @@ function _avisarDescarga(res, nombre) {
   }
 
   const puedeAbrir = res.nativo && res.uri;
+  _archivosDescargados = puedeAbrir ? [res] : [];
   abrirModal(`
     <h3>✓ Descarga completa</h3>
     <p class="sub">El archivo quedó guardado en tu teléfono.</p>
@@ -1729,7 +2101,7 @@ function _avisarDescarga(res, nombre) {
 
     ${puedeAbrir ? `
     <button class="btn btn-amarillo" style="margin-bottom:9px;"
-            onclick="Descargas.abrir(${JSON.stringify(res.uri)}, ${JSON.stringify(res.mime)})">
+            onclick="_abrirDescargado(0)">
       Abrir archivo
     </button>` : ''}
 
@@ -1768,8 +2140,11 @@ function _construirPDF() {
   doc.text('Inventario — Frenos Pala', 14, 20);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
+  const totC = filas.reduce((a, f) => a + f.costo  * f.cantidad, 0);
+  const totV = filas.reduce((a, f) => a + f.precio * f.cantidad, 0);
   doc.text(`Fecha: ${fechaStr}`, 14, 27);
   doc.text(`${filas.length} productos`, 14, 32);
+  doc.text(`Valor a compra: ${pesos(totC)}   |   Valor a venta sin IVA: ${pesos(totV)}`, 14, 37);
 
   const cuerpo = [];
   let catActual = '';
@@ -1777,32 +2152,41 @@ function _construirPDF() {
     if (f.cat !== catActual) {
       catActual = f.cat;
       cuerpo.push([{
-        content: f.cat, colSpan: 3,
+        content: f.cat, colSpan: 5,
         styles: { fontStyle: 'bold', fillColor: [44, 44, 40], textColor: [242, 183, 5], fontSize: 9 }
       }]);
     }
-    cuerpo.push([f.nombre, f.ref, { content: String(f.cantidad), styles: { halign: 'center', fontStyle: 'bold' } }]);
+    cuerpo.push([
+      f.nombre + (f.baja ? '  [descontinuado]' : ''), f.ref,
+      { content: String(f.cantidad), styles: { halign: 'center', fontStyle: 'bold' } },
+      { content: f.costo  ? pesos(f.costo)  : '—', styles: { halign: 'right' } },
+      { content: f.precio ? pesos(f.precio) : '—', styles: { halign: 'right' } }
+    ]);
   });
 
   const totalUnidades = filas.reduce((s, f) => s + f.cantidad, 0);
   cuerpo.push([
     { content: 'Total', colSpan: 2, styles: { halign: 'right', fontStyle: 'bold' } },
-    { content: String(totalUnidades), styles: { halign: 'center', fontStyle: 'bold' } }
+    { content: String(totalUnidades), styles: { halign: 'center', fontStyle: 'bold' } },
+    { content: pesos(totC), styles: { halign: 'right', fontStyle: 'bold' } },
+    { content: pesos(totV), styles: { halign: 'right', fontStyle: 'bold' } }
   ]);
 
   if (typeof doc.autoTable !== 'function') {
     throw new Error('El complemento de tablas del PDF no cargó. Cierra y vuelve a abrir la app.');
   }
   doc.autoTable({
-    startY: 36,
-    head: [['Producto', 'Referencia', 'Cant.']],
+    startY: 42,
+    head: [['Producto', 'Referencia', 'Cant.', 'Compra', 'Venta']],
     body: cuerpo,
-    styles: { fontSize: 8.5, cellPadding: 2.5 },
+    styles: { fontSize: 8, cellPadding: 2.2 },
     headStyles: { fillColor: [28, 29, 31], textColor: [237, 237, 231], fontStyle: 'bold' },
     columnStyles: {
       0: { cellWidth: 'auto' },
-      1: { cellWidth: 45, fontSize: 7.5 },
-      2: { cellWidth: 20, halign: 'center' }
+      1: { cellWidth: 34, fontSize: 7 },
+      2: { cellWidth: 14, halign: 'center' },
+      3: { cellWidth: 25, halign: 'right', fontSize: 7.5 },
+      4: { cellWidth: 25, halign: 'right', fontSize: 7.5 }
     },
     theme: 'grid',
     margin: { left: 14, right: 14 },
@@ -1813,6 +2197,55 @@ function _construirPDF() {
       doc.text(`Página ${pag}`, d.settings.margin.left, doc.internal.pageSize.getHeight() - 8);
     }
   });
+
+  // ---- Página de compras sugeridas ----
+  const pedido = _calcularPedido();
+  if (pedido.lista.length) {
+    doc.addPage();
+    const meses = mesesCobertura === 1 ? '1 mes' : `${mesesCobertura} meses`;
+
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`Compras sugeridas — ${meses}`, 14, 20);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Inversión estimada sin IVA: ${pesos(pedido.inversion)}`, 14, 28);
+    doc.text(`Con IVA del ${Math.round(IVA * 100)}%: ${pesos(conIVA(pedido.inversion))}`, 14, 33);
+    doc.text(`${pedido.unidades} unidades · ${pedido.lista.length} referencias`, 14, 38);
+    if (pedido.sinCosto) {
+      doc.setTextColor(200, 90, 20);
+      doc.text(`${pedido.sinCosto} referencias sin precio de compra: la inversión real es mayor.`, 14, 43);
+      doc.setTextColor(0);
+    }
+
+    doc.autoTable({
+      startY: pedido.sinCosto ? 48 : 43,
+      head: [['Producto', 'Referencia', 'Salen/mes', 'Hay', 'Pedir', 'Inversión']],
+      body: pedido.lista.map(x => [
+        x.p.nombre, x.p.ref,
+        { content: String(x.c), styles: { halign: 'center' } },
+        { content: String(x.hay), styles: { halign: 'center' } },
+        { content: String(x.pedir), styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: x.p.costo ? pesos(x.inversion) : '—', styles: { halign: 'right' } }
+      ]).concat([[
+        { content: 'Total', colSpan: 4, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: String(pedido.unidades), styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: pesos(pedido.inversion), styles: { halign: 'right', fontStyle: 'bold' } }
+      ]]),
+      styles: { fontSize: 8, cellPadding: 2.2 },
+      headStyles: { fillColor: [28, 29, 31], textColor: [237, 237, 231], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 32, fontSize: 7 },
+        2: { cellWidth: 18, halign: 'center' },
+        3: { cellWidth: 14, halign: 'center' },
+        4: { cellWidth: 14, halign: 'center' },
+        5: { cellWidth: 28, halign: 'right' }
+      },
+      theme: 'grid',
+      margin: { left: 14, right: 14 }
+    });
+  }
 
   return doc.output('blob');
 }
@@ -1843,31 +2276,71 @@ function _construirExcel() {
   const datosHoja = [
     ['Inventario — Frenos Pala'],
     [`Fecha: ${fechaStr}`],
+    [`IVA aplicado: ${Math.round(IVA * 100)}%`],
     [],
-    ['Categoría', 'Producto', 'Referencia', 'Cantidad']
+    ['Categoría', 'Producto', 'Referencia', 'Cantidad',
+     'Compra sin IVA', 'Venta sin IVA', `Venta con IVA`,
+     'Valor a compra', 'Valor a venta']
   ];
-  filas.forEach(f => datosHoja.push([f.cat, f.nombre, f.ref, f.cantidad]));
+  filas.forEach(f => datosHoja.push([
+    f.cat, f.nombre + (f.baja ? ' (DESCONTINUADO)' : ''), f.ref, f.cantidad,
+    f.costo || '', f.precio || '', f.precio ? Math.round(conIVA(f.precio)) : '',
+    f.costo ? Math.round(f.costo * f.cantidad) : '',
+    f.precio ? Math.round(f.precio * f.cantidad) : ''
+  ]));
 
   const totalUnidades = filas.reduce((s, f) => s + f.cantidad, 0);
+  const totalCompra   = filas.reduce((s, f) => s + f.costo  * f.cantidad, 0);
+  const totalVenta    = filas.reduce((s, f) => s + f.precio * f.cantidad, 0);
   datosHoja.push([]);
-  datosHoja.push(['', '', 'TOTAL', totalUnidades]);
+  datosHoja.push(['', '', 'TOTAL', totalUnidades, '', '', '',
+                  Math.round(totalCompra), Math.round(totalVenta)]);
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(datosHoja);
-  ws['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 20 }, { wch: 12 }];
+  ws['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 20 }, { wch: 10 },
+                 { wch: 15 }, { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 15 }];
   XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+
+  // Hoja de compras sugeridas, si ya hay consumo registrado
+  const pedido = _calcularPedido();
+  if (pedido.lista.length) {
+    const meses = mesesCobertura;
+    const compras = [
+      [`Compras sugeridas para ${meses} ${meses === 1 ? 'mes' : 'meses'}`],
+      [`Fecha: ${fechaStr}`],
+      [],
+      ['Referencia', 'Producto', 'Categoría', 'Salen al mes', 'Hay ahora',
+       'Pedir', 'Compra unitaria', 'Inversión sin IVA']
+    ];
+    pedido.lista.forEach(x => compras.push([
+      x.p.ref, x.p.nombre, x.p.cat, x.c, x.hay, x.pedir,
+      x.p.costo || '', x.p.costo ? Math.round(x.inversion) : ''
+    ]));
+    compras.push([]);
+    compras.push(['', '', '', '', '', pedido.unidades, 'TOTAL', Math.round(pedido.inversion)]);
+    compras.push(['', '', '', '', '', '', `Con IVA ${Math.round(IVA*100)}%`,
+                  Math.round(conIVA(pedido.inversion))]);
+
+    const ws3 = XLSX.utils.aoa_to_sheet(compras);
+    ws3['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 18 }, { wch: 13 },
+                    { wch: 11 }, { wch: 9 }, { wch: 16 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Compras sugeridas');
+  }
 
   // Segunda hoja: detalle por bodega
   const detalle = [['Referencia', 'Producto', 'Categoría', 'Marca',
-                    ...BODEGAS.map(b => `Bodega ${b}`), 'Total']];
+                    ...BODEGAS.map(b => `Bodega ${b}`), 'Total',
+                    'Compra sin IVA', 'Venta sin IVA']];
   datos.productos.forEach(p => {
-    detalle.push([p.ref, p.nombre, p.cat, p.marca || '',
+    detalle.push([p.ref, p.nombre + (p.activo === false ? ' (DESCONTINUADO)' : ''), p.cat, p.marca || '',
       ...BODEGAS.map(b => (p.stock[b] === null ? 'sin contar' : p.stock[b])),
-      stockTotal(p)]);
+      stockTotal(p), p.costo || '', p.precio || '']);
   });
   const ws2 = XLSX.utils.aoa_to_sheet(detalle);
   ws2['!cols'] = [{ wch: 20 }, { wch: 45 }, { wch: 18 }, { wch: 12 },
-                  ...BODEGAS.map(() => ({ wch: 11 })), { wch: 10 }];
+                  ...BODEGAS.map(() => ({ wch: 11 })), { wch: 10 },
+                  { wch: 15 }, { wch: 14 }];
   XLSX.utils.book_append_sheet(wb, ws2, 'Por bodega');
 
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -1905,6 +2378,8 @@ async function descargarLosDos() {
       return;
     }
 
+    _archivosDescargados = [r1, r2];
+
     abrirModal(`
       <h3>✓ Descarga completa</h3>
       <p class="sub">Los dos archivos quedaron guardados en tu teléfono.</p>
@@ -1919,11 +2394,11 @@ async function descargarLosDos() {
 
       ${r1.nativo && r1.uri ? `
       <button class="btn btn-amarillo" style="margin-bottom:8px;"
-              onclick="Descargas.abrir(${JSON.stringify(r1.uri)}, ${JSON.stringify(r1.mime)})">
+              onclick="_abrirDescargado(0)">
         Abrir el PDF
       </button>
       <button class="btn btn-verde" style="margin-bottom:8px;"
-              onclick="Descargas.abrir(${JSON.stringify(r2.uri)}, ${JSON.stringify(r2.mime)})">
+              onclick="_abrirDescargado(1)">
         Abrir el Excel
       </button>` : ''}
 
