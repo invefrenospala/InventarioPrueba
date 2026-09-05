@@ -2561,6 +2561,9 @@ function ocultarLogin() {
 /** Carga los usuarios disponibles en el selector del login */
 async function _cargarSelectorUsuarios() {
   const sel = $('loginUsuario');
+  const reintentar = $('loginReintentar');
+  reintentar.style.display = 'none';
+  sel.innerHTML = '<option value="">Cargando usuarios...</option>';
 
   // Intentar cargar de Supabase
   if (window.SB && window.SB.configurado) {
@@ -2586,8 +2589,9 @@ async function _cargarSelectorUsuarios() {
     }
   } catch(e) {}
 
-  // No hay usuarios en ningún lado
-  sel.innerHTML = '<option value="">Sin conexión — no se pueden cargar usuarios</option>';
+  // No hay usuarios en ningún lado: mostrar mensaje y dejar reintentar
+  sel.innerHTML = '<option value="">No se pudo conectar — toca reintentar</option>';
+  reintentar.style.display = '';
 }
 
 /** Intenta iniciar sesión con las credenciales ingresadas */
