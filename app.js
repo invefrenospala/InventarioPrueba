@@ -487,6 +487,12 @@ async function bucleZxing() {
       F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E,
       F.CODE_128, F.CODE_39, F.ITF, F.CODABAR, F.QR_CODE
     ]);
+    // TRY_HARDER: el lector se esfuerza más por descifrar códigos difíciles
+    // (etiquetas chicas, borrosas, en superficies curvas). Cada intento es
+    // un poco más lento, pero como ya restringimos los formatos arriba, hay
+    // margen de sobra — y sin esto, códigos de baja calidad simplemente no
+    // se leen nunca, sin importar cuántas veces se intente.
+    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
 
     // Segundo argumento: cada cuántos milisegundos intenta leer un cuadro
     // nuevo (antes usaba el valor por defecto de la librería, 500ms).
