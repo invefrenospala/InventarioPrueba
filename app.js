@@ -25,6 +25,11 @@ let datos = {
   recientes: []      // últimas referencias consultadas
 };
 
+// ---------- Sesión de usuario ----------
+const CLAVE_SESION = 'fp_sesion_v1';
+let usuarioActual  = null;  // { id, nombre, rol, pin, activo }
+let listaUsuarios  = [];    // usuarios cargados de Supabase
+
 // ==========================================================
 // GUARDAR Y CARGAR
 // ==========================================================
@@ -66,9 +71,10 @@ async function cargar() {
   // 2. Intentar sincronizar con Supabase (si está configurado)
   if (window.SB && window.SB.configurado) {
     try {
-      const [productosRemoto, barrasRemoto] = await Promise.all([
+      const [productosRemoto, barrasRemoto, movsRemoto] = await Promise.all([
         window.SB.cargarProductos(),
-        window.SB.cargarBarras()
+        window.SB.cargarBarras(),
+        window.SB.cargarMovimientos()
       ]);
 
       if (productosRemoto && productosRemoto.length) {
@@ -106,6 +112,22 @@ async function cargar() {
         guardar(); // actualizar localStorage con los datos frescos
       }
 
+      // Movimientos: la nube es la fuente de verdad
+      if (movsRemoto && movsRemoto.length) {
+        datos.movimientos = movsRemoto.map(m => ({
+          id:       m.id,
+          ref:      m.ref,
+          tipo:     m.tipo,
+          cantidad: m.cantidad,
+          bodega:   m.bodega,
+          destino:  m.destino  || null,
+          anterior: m.anterior !== undefined ? m.anterior : null,
+          usuario:  m.usuario  || null,
+          fecha:    m.fecha
+        }));
+        guardar();
+      }
+
       if (barrasRemoto) {
         // Fusionar: las barras locales tienen precedencia si ya existen
         datos.barras = Object.assign({}, barrasRemoto, datos.barras);
@@ -114,22 +136,57 @@ async function cargar() {
 
       window.SB.actualizarIndicador('online');
 
-      // 3. Escuchar actualizaciones en tiempo real
-      window.SB.escucharCambios(productoActualizado => {
-        const idx = datos.productos.findIndex(p => p.ref === productoActualizado.ref);
-        if (idx >= 0) {
-          datos.productos[idx].stock  = productoActualizado.stock;
-          datos.productos[idx].minimo = productoActualizado.minimo;
+      // 3. Escuchar actualizaciones en tiempo real (productos Y movimientos)
+      window.SB.escucharCambios(
+        // Callback para productos actualizados
+        productoActualizado => {
+          const idx = datos.productos.findIndex(p => p.ref === productoActualizado.ref);
+          if (idx >= 0) {
+            datos.productos[idx].stock  = productoActualizado.stock;
+            datos.productos[idx].minimo = productoActualizado.minimo;
+            guardar();
+            // Refrescar la vista si es el producto que está abierto
+            if (productoActual && productoActual.ref === productoActualizado.ref) {
+              productoActual.stock = productoActualizado.stock;
+              abrirProducto(productoActual);
+            }
+            // Refrescar catálogo si está activo
+            if (pantalla === 'catalogo') pintarCatalogo();
+          }
+        },
+        // Callback para movimientos nuevos (de otros dispositivos)
+        movNuevo => {
+          // Evitar duplicados: si ya tenemos este movimiento (por id o por fecha exacta), ignorar
+          const yaExiste = datos.movimientos.some(m =>
+            (m.id && m.id === movNuevo.id) ||
+            (!m.id && m.ref === movNuevo.ref && m.fecha === movNuevo.fecha &&
+             m.tipo === movNuevo.tipo && m.cantidad === movNuevo.cantidad)
+          );
+          if (yaExiste) return;
+
+          // Es un movimiento de otro dispositivo: agregarlo
+          datos.movimientos.unshift({
+            id:       movNuevo.id,
+            ref:      movNuevo.ref,
+            tipo:     movNuevo.tipo,
+            cantidad: movNuevo.cantidad,
+            bodega:   movNuevo.bodega,
+            destino:  movNuevo.destino || null,
+            anterior: movNuevo.anterior,
+            usuario:  movNuevo.usuario || null,
+            fecha:    movNuevo.fecha
+          });
           guardar();
-          // Refrescar la vista si es el producto que está abierto
-          if (productoActual && productoActual.ref === productoActualizado.ref) {
-            productoActual.stock = productoActualizado.stock;
+
+          // Refrescar vistas si están visibles
+          if (pantalla === 'movs') pintarMovs();
+          if (pantalla === 'informes') pintarInformes();
+          if (pantalla === 'producto' && productoActual &&
+              productoActual.ref === movNuevo.ref) {
             abrirProducto(productoActual);
           }
-          // Refrescar catálogo si está activo
-          if (pantalla === 'catalogo') pintarCatalogo();
         }
-      });
+      );
 
     } catch(e) {
       console.warn('Error cargando desde Supabase, usando localStorage:', e.message);
@@ -1357,6 +1414,7 @@ function guardarMovimiento() {
     cantidad,
     bodega:  b,
     destino: tipoMov === 'TRASLADO' ? bodegaDestino : null,
+    usuario: usuarioActual ? usuarioActual.id : null,
     fecha:   new Date().toISOString()
   };
 
@@ -1421,6 +1479,7 @@ function guardarConteo() {
         cantidad: nuevo === null ? 0 : nuevo,
         anterior: p.stock[b],
         bodega: b, destino: null,
+        usuario: usuarioActual ? usuarioActual.id : null,
         fecha: new Date().toISOString()
       };
       datos.movimientos.unshift(mov);
@@ -1565,13 +1624,14 @@ function pintarMovs() {
         const etiqueta = m.tipo === 'CONTEO'
           ? `Conteo: ${m.anterior === null ? 'sin contar' : m.anterior} → ${m.cantidad}`
           : `${m.tipo.charAt(0) + m.tipo.slice(1).toLowerCase()} · ${donde}`;
+        const quien = m.usuario ? _nombreUsuario(m.usuario) : '';
 
         return `<div class="mov ${clase}">
           <div style="min-width:0;flex:1;">
             <div class="t" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
               ${p ? p.nombre : m.ref}
             </div>
-            <div class="f">${etiqueta} · ${fechaCorta(m.fecha)}</div>
+            <div class="f">${etiqueta} · ${fechaCorta(m.fecha)}${quien ? ' · <b>' + quien + '</b>' : ''}</div>
           </div>
           <div class="q">${m.tipo === 'CONTEO' ? '=' + m.cantidad : signo + m.cantidad}</div>
         </div>`;
@@ -1583,6 +1643,13 @@ function filtrarMov(t) {
   pintarMovs();
 }
 
+/** Resuelve el ID de un usuario a su nombre para mostrar */
+function _nombreUsuario(id) {
+  if (!id) return '';
+  const u = listaUsuarios.find(x => x.id === id);
+  return u ? u.nombre : id;
+}
+
 function pintarMovsDe(ref, limite) {
   const l = datos.movimientos.filter(m => m.ref === ref).slice(0, limite);
   if (l.length === 0) return '<div class="vacio">Sin movimientos todavía</div>';
@@ -1592,10 +1659,11 @@ function pintarMovsDe(ref, limite) {
     const clase = m.tipo === 'TRASLADO' ? 'traslado'
                 : m.tipo === 'CONTEO' ? '' : m.tipo.toLowerCase();
     const donde = m.tipo === 'TRASLADO' ? `Bod ${m.bodega} → ${m.destino}` : `Bodega ${m.bodega}`;
+    const quien = m.usuario ? _nombreUsuario(m.usuario) : '';
     return `<div class="mov ${clase}">
       <div>
         <div class="t">${m.tipo.charAt(0) + m.tipo.slice(1).toLowerCase()}</div>
-        <div class="f">${donde} · ${fechaCorta(m.fecha)}</div>
+        <div class="f">${donde} · ${fechaCorta(m.fecha)}${quien ? ' · <b>' + quien + '</b>' : ''}</div>
       </div>
       <div class="q">${m.tipo === 'CONTEO' ? '=' + m.cantidad : signo + m.cantidad}</div>
     </div>`;
@@ -2465,8 +2533,140 @@ $('modal').addEventListener('click', e => {
 });
 
 // ==========================================================
-// ARRANQUE
+// ARRANQUE Y AUTENTICACIÓN
 // ==========================================================
+
+/** Muestra la pantalla de login y oculta todo lo demás */
+function mostrarLogin() {
+  // Ocultar la app
+  document.querySelector('header').style.display = 'none';
+  document.querySelector('nav').style.display    = 'none';
+  document.querySelectorAll('.pantalla').forEach(x => x.classList.remove('activa'));
+
+  // Mostrar login
+  const ls = $('login-screen');
+  ls.classList.remove('oculto');
+
+  // Cargar lista de usuarios en el selector
+  _cargarSelectorUsuarios();
+}
+
+/** Oculta el login y muestra la app */
+function ocultarLogin() {
+  $('login-screen').classList.add('oculto');
+  document.querySelector('header').style.display = '';
+  document.querySelector('nav').style.display    = '';
+}
+
+/** Carga los usuarios disponibles en el selector del login */
+async function _cargarSelectorUsuarios() {
+  const sel = $('loginUsuario');
+
+  // Intentar cargar de Supabase
+  if (window.SB && window.SB.configurado) {
+    const usuarios = await window.SB.cargarUsuarios();
+    if (usuarios && usuarios.length) {
+      listaUsuarios = usuarios;
+      sel.innerHTML = '<option value="">— Selecciona tu usuario —</option>' +
+        usuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
+      // Guardar en localStorage como respaldo offline
+      try { localStorage.setItem('fp_usuarios_v1', JSON.stringify(usuarios)); } catch(e) {}
+      return;
+    }
+  }
+
+  // Respaldo: usar usuarios guardados en localStorage
+  try {
+    const raw = localStorage.getItem('fp_usuarios_v1');
+    if (raw) {
+      listaUsuarios = JSON.parse(raw);
+      sel.innerHTML = '<option value="">— Selecciona tu usuario —</option>' +
+        listaUsuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
+      return;
+    }
+  } catch(e) {}
+
+  // No hay usuarios en ningún lado
+  sel.innerHTML = '<option value="">Sin conexión — no se pueden cargar usuarios</option>';
+}
+
+/** Intenta iniciar sesión con las credenciales ingresadas */
+async function intentarLogin() {
+  const id  = $('loginUsuario').value;
+  const pin = $('loginPin').value.trim();
+  const err = $('loginError');
+
+  if (!id) { err.textContent = 'Selecciona un usuario'; return; }
+  if (!pin) { err.textContent = 'Escribe la contraseña'; return; }
+
+  err.textContent = '';
+  $('btnLogin').disabled = true;
+  $('btnLogin').textContent = 'Verificando...';
+
+  // Primero intentar contra Supabase
+  if (window.SB && window.SB.configurado && navigator.onLine) {
+    const res = await window.SB.validarUsuario(id, pin);
+    if (res.ok) {
+      _establecerSesion(res.usuario);
+      return;
+    }
+    err.textContent = res.error;
+    $('btnLogin').disabled = false;
+    $('btnLogin').textContent = 'Entrar';
+    return;
+  }
+
+  // Respaldo offline: validar contra la lista local
+  const local = listaUsuarios.find(u => u.id === id && u.pin === pin);
+  if (local) {
+    _establecerSesion(local);
+    return;
+  }
+
+  err.textContent = navigator.onLine
+    ? 'Usuario o contraseña incorrectos'
+    : 'Sin internet. Verifica tus datos.';
+  $('btnLogin').disabled = false;
+  $('btnLogin').textContent = 'Entrar';
+}
+
+/** Establece la sesión del usuario y continúa con la carga de datos */
+function _establecerSesion(usuario) {
+  usuarioActual = usuario;
+
+  // Guardar sesión en localStorage
+  try {
+    localStorage.setItem(CLAVE_SESION, JSON.stringify({
+      id: usuario.id, nombre: usuario.nombre, rol: usuario.rol
+    }));
+  } catch(e) {}
+
+  // Mostrar quién está logueado en el header
+  const badge = $('usuario-badge');
+  badge.textContent = usuario.nombre;
+  badge.style.display = '';
+  $('btn-logout').style.display = '';
+
+  // Ocultar login y mostrar la app
+  ocultarLogin();
+  $('btnLogin').disabled = false;
+  $('btnLogin').textContent = 'Entrar';
+  $('loginPin').value = '';
+  $('loginError').textContent = '';
+
+  // Continuar con la carga de datos
+  _continuarInicio();
+}
+
+/** Cierra la sesión actual y vuelve al login */
+function cerrarSesion() {
+  usuarioActual = null;
+  try { localStorage.removeItem(CLAVE_SESION); } catch(e) {}
+  $('usuario-badge').style.display = 'none';
+  $('btn-logout').style.display = 'none';
+  mostrarLogin();
+}
+
 function pintarRecientes() {
   const l = datos.recientes.map(r => buscarPorRef(r)).filter(Boolean);
   $('recientes').innerHTML = l.length === 0
@@ -2481,11 +2681,8 @@ function pintarRecientes() {
       </div>`).join('');
 }
 
-async function iniciar() {
-  // 1. Inicializar Supabase (antes de cargar, para que cargar() pueda usarlo)
-  if (window.SB) window.SB.inicializar();
-
-  // 2. Cargar datos (localStorage primero, luego sincroniza con Supabase si está configurado)
+/** Carga datos y enciende la app. Se llama después de un login exitoso. */
+async function _continuarInicio() {
   await cargar();
 
   $('selBodega').innerHTML = BODEGAS.map(b =>
@@ -2502,6 +2699,45 @@ async function iniciar() {
 
   pintarRecientes();
   pintarCatalogo();
+  ir('escanear');
+}
+
+async function iniciar() {
+  // 1. Inicializar Supabase (antes de todo, para poder validar login)
+  if (window.SB) window.SB.inicializar();
+
+  // 2. ¿Hay sesión guardada?
+  try {
+    const raw = localStorage.getItem(CLAVE_SESION);
+    if (raw) {
+      const sesion = JSON.parse(raw);
+      // Cargar lista de usuarios (para el _nombreUsuario helper)
+      if (window.SB && window.SB.configurado) {
+        const usuarios = await window.SB.cargarUsuarios();
+        if (usuarios) listaUsuarios = usuarios;
+      } else {
+        try {
+          const u = localStorage.getItem('fp_usuarios_v1');
+          if (u) listaUsuarios = JSON.parse(u);
+        } catch(e) {}
+      }
+
+      // Restaurar sesión
+      const completo = listaUsuarios.find(u => u.id === sesion.id) || sesion;
+      usuarioActual = completo;
+      const badge = $('usuario-badge');
+      badge.textContent = completo.nombre || sesion.id;
+      badge.style.display = '';
+      $('btn-logout').style.display = '';
+
+      // Continuar directo (no pedir login)
+      await _continuarInicio();
+      return;
+    }
+  } catch(e) {}
+
+  // 3. No hay sesión: mostrar login
+  mostrarLogin();
 }
 
 iniciar();

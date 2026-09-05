@@ -80,6 +80,65 @@ async function cargarBarrasDesdeSupabase() {
 }
 
 // ==========================================================
+// CARGAR MOVIMIENTOS DESDE SUPABASE
+// ==========================================================
+
+/** Descarga todos los movimientos (historial completo) */
+async function cargarMovimientosDesdeSupabase() {
+  if (!sbConfigurado) return null;
+  try {
+    const { data, error } = await sbClient
+      .from('movimientos')
+      .select('*')
+      .order('fecha', { ascending: false })
+      .limit(5000);
+    if (error) throw error;
+    return data; // array con { id, ref, tipo, cantidad, bodega, destino, anterior, fecha, usuario }
+  } catch(e) {
+    console.warn('No se pudo cargar movimientos de Supabase:', e.message);
+    return null;
+  }
+}
+
+// ==========================================================
+// USUARIOS Y AUTENTICACIÓN
+// ==========================================================
+
+/** Carga la lista de usuarios activos */
+async function cargarUsuarios() {
+  if (!sbConfigurado) return null;
+  try {
+    const { data, error } = await sbClient
+      .from('usuarios')
+      .select('*')
+      .eq('activo', true);
+    if (error) throw error;
+    return data;
+  } catch(e) {
+    console.warn('No se pudo cargar usuarios de Supabase:', e.message);
+    return null;
+  }
+}
+
+/** Valida un usuario contra la tabla de usuarios */
+async function validarUsuario(id, pin) {
+  if (!sbConfigurado) return { ok: false, error: 'Base de datos no configurada' };
+  try {
+    const { data, error } = await sbClient
+      .from('usuarios')
+      .select('*')
+      .eq('id', id)
+      .eq('pin', pin)
+      .eq('activo', true)
+      .single();
+    if (error || !data) return { ok: false, error: 'Usuario o contraseña incorrectos' };
+    return { ok: true, usuario: data };
+  } catch(e) {
+    return { ok: false, error: 'Error de conexión. Intenta de nuevo.' };
+  }
+}
+
+// ==========================================================
 // SUBIR UN MOVIMIENTO
 // ==========================================================
 
@@ -118,6 +177,7 @@ async function _subirMovimientoDirecto(mov, stock) {
       bodega:   mov.bodega,
       destino:  mov.destino  || null,
       anterior: mov.anterior !== undefined ? mov.anterior : null,
+      usuario:  mov.usuario  || null,
       fecha:    mov.fecha
     });
     if (e1) throw e1;
@@ -160,10 +220,12 @@ async function subirBarra(codigo, ref) {
 /**
  * Escucha cambios en la tabla productos para actualizar la vista
  * si otra persona registra un movimiento desde otro celular.
+ * También escucha nuevos movimientos para sincronizarlos.
  *
- * @param {Function} onCambio - Callback que recibe el producto actualizado
+ * @param {Function} onCambioProducto  - Callback que recibe el producto actualizado
+ * @param {Function} onNuevoMovimiento - Callback que recibe el movimiento nuevo
  */
-function escucharCambiosEnTiempoReal(onCambio) {
+function escucharCambiosEnTiempoReal(onCambioProducto, onNuevoMovimiento) {
   if (!sbConfigurado) return;
 
   sbClient
@@ -173,12 +235,20 @@ function escucharCambiosEnTiempoReal(onCambio) {
       { event: 'UPDATE', schema: 'public', table: 'productos' },
       payload => {
         // payload.new tiene el producto con el stock actualizado
-        if (payload.new) onCambio(payload.new);
+        if (payload.new) onCambioProducto(payload.new);
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'movimientos' },
+      payload => {
+        // payload.new tiene el movimiento recién insertado
+        if (payload.new && onNuevoMovimiento) onNuevoMovimiento(payload.new);
       }
     )
     .subscribe(status => {
       if (status === 'SUBSCRIBED') {
-        console.log('Realtime conectado ✓');
+        console.log('Realtime conectado ✓ (productos + movimientos)');
       }
     });
 }
@@ -347,6 +417,9 @@ window.SB = {
   inicializar:        inicializarSupabase,
   cargarProductos:    cargarProductosDesdeSupabase,
   cargarBarras:       cargarBarrasDesdeSupabase,
+  cargarMovimientos:  cargarMovimientosDesdeSupabase,
+  cargarUsuarios,
+  validarUsuario,
   subirMovimiento,
   subirBarra,
   subirProductoNuevo,

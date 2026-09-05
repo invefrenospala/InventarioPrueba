@@ -451,3 +451,43 @@ nav svg{ width:19px; height:19px; }
   font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer;
 }
 .mini:active{ background:var(--line); }
+
+/* ---------- AUTENTICACIÓN / LOGIN ---------- */
+.login-screen{
+  position:fixed; inset:0; background:var(--asphalt);
+  display:flex; align-items:center; justify-content:center;
+  z-index:999; padding:15px;
+}
+.login-screen.oculto{ display:none; }
+
+.login-card{
+  width:100%; max-width:360px; background:var(--panel);
+  border:1px solid var(--line); border-radius:14px;
+  padding:28px 22px; box-shadow:0 8px 30px rgba(0,0,0,.4);
+}
+.login-marca{
+  font-family:'Oswald',sans-serif; font-weight:700; font-size:26px;
+  letter-spacing:.5px; text-transform:uppercase; text-align:center;
+  margin-bottom:24px; color:var(--ink);
+}
+.login-marca span{ color:var(--yellow); }
+
+.login-card .entrada{
+  margin-bottom:14px; background:var(--asphalt);
+}
+.login-card .btn{ margin-top:10px; }
+
+/* Indicador de usuario en cabecera */
+.usuario-badge{
+  display:flex; align-items:center; gap:6px;
+  background:rgba(255,255,255,.05); border:1px solid var(--line);
+  border-radius:20px; padding:4px 10px;
+  font-size:11px; color:var(--dim); font-weight:600;
+}
+.btn-logout{
+  background:none; border:none; padding:4px;
+  color:var(--dim); cursor:pointer; display:flex;
+  align-items:center; justify-content:center;
+}
+.btn-logout:active{ color:var(--red); }
+
