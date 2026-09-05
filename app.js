@@ -360,7 +360,12 @@ async function iniciarCamara() {
       video: {
         facingMode: { ideal: 'environment' },
         width: { ideal: 1280 },
-        height: { ideal: 720 }
+        height: { ideal: 720 },
+        // "advanced" es una lista de preferencias: el navegador intenta
+        // cumplirlas pero NUNCA falla si no las soporta (a diferencia de
+        // ponerlas directo en video). Ayuda a que el iPhone enfoque de
+        // cerca, que es justo lo que necesita para leer un código de barras.
+        advanced: [{ focusMode: 'continuous' }]
       },
       audio: false
     });
@@ -460,14 +465,22 @@ function cargarZxing() {
 
 async function bucleZxing() {
   try {
-    zxing = new window.ZXing.BrowserMultiFormatReader();
-    // decodeFromStream() en vez de decodeFromVideoElement(): este último
-    // espera a que ZXing detecte por sí solo que el <video> ya está listo
-    // (sus propios eventos "loadedmetadata"/"play"), y en iOS Safari esos
-    // eventos no se disparan igual que en Chrome/Android — la cámara se ve
-    // en pantalla pero ZXing nunca arranca a leer. decodeFromStream() le
-    // entrega directamente el stream que ya abrimos nosotros, sin depender
-    // de esa detección.
+    // Sin esto, ZXing intenta reconocer TODOS los formatos que existen en
+    // cada cuadro de video (mucho más lento). Al decirle exactamente cuáles
+    // buscar (los mismos que usa el lector nativo), cada intento es más
+    // rápido y se alcanzan a revisar más cuadros por segundo — en iPhone,
+    // donde ya de por sí hay menos margen, esto es lo que marca la diferencia
+    // entre "casi nunca lee" y "lee rápido".
+    const hints = new Map();
+    const F = window.ZXing.BarcodeFormat;
+    hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E,
+      F.CODE_128, F.CODE_39, F.ITF, F.CODABAR, F.QR_CODE
+    ]);
+
+    // Segundo argumento: cada cuántos milisegundos intenta leer un cuadro
+    // nuevo (antes usaba el valor por defecto de la librería, 500ms).
+    zxing = new window.ZXing.BrowserMultiFormatReader(hints, 120);
     zxing.decodeFromStream(stream, $('video'), (resultado) => {
       if (resultado && escaneando) alLeer(String(resultado.getText()).trim());
     });
