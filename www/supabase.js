@@ -15,6 +15,21 @@ let colaPendiente  = []; // movimientos sin sincronizar
 const CLAVE_COLA   = 'fp_cola_pendiente_v1';
 
 // ==========================================================
+// TIMEOUT DE SEGURIDAD
+// ==========================================================
+// Si el celular tiene una conexión que "se cuelga" (abre la conexión
+// pero nunca responde, en vez de fallar rápido), las llamadas de
+// supabase-js pueden quedarse esperando para siempre y la app se
+// queda pegada (ej. "Cargando usuarios..."). Esta función obliga a
+// que toda llamada falle después de N segundos si no hay respuesta.
+function _conTimeout(promesa, ms = 9000) {
+  return Promise.race([
+    Promise.resolve(promesa),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Tiempo de espera agotado')), ms))
+  ]);
+}
+
+// ==========================================================
 // INICIALIZACIÓN
 // ==========================================================
 function inicializarSupabase() {
@@ -55,7 +70,7 @@ function inicializarSupabase() {
 async function cargarProductosDesdeSupabase() {
   if (!sbConfigurado) return null;
   try {
-    const { data, error } = await sbClient.from('productos').select('*');
+    const { data, error } = await _conTimeout(sbClient.from('productos').select('*'));
     if (error) throw error;
     return data; // array con { ref, cat, nombre, marca, precio, costo, minimo, stock }
   } catch(e) {
@@ -68,7 +83,7 @@ async function cargarProductosDesdeSupabase() {
 async function cargarBarrasDesdeSupabase() {
   if (!sbConfigurado) return null;
   try {
-    const { data, error } = await sbClient.from('barras').select('*');
+    const { data, error } = await _conTimeout(sbClient.from('barras').select('*'));
     if (error) throw error;
     const mapa = {};
     data.forEach(b => { mapa[b.codigo] = b.ref; });
@@ -87,11 +102,9 @@ async function cargarBarrasDesdeSupabase() {
 async function cargarMovimientosDesdeSupabase() {
   if (!sbConfigurado) return null;
   try {
-    const { data, error } = await sbClient
-      .from('movimientos')
-      .select('*')
-      .order('fecha', { ascending: false })
-      .limit(5000);
+    const { data, error } = await _conTimeout(
+      sbClient.from('movimientos').select('*').order('fecha', { ascending: false }).limit(5000)
+    );
     if (error) throw error;
     return data; // array con { id, ref, tipo, cantidad, bodega, destino, anterior, fecha, usuario }
   } catch(e) {
@@ -108,10 +121,9 @@ async function cargarMovimientosDesdeSupabase() {
 async function cargarUsuarios() {
   if (!sbConfigurado) return null;
   try {
-    const { data, error } = await sbClient
-      .from('usuarios')
-      .select('*')
-      .eq('activo', true);
+    const { data, error } = await _conTimeout(
+      sbClient.from('usuarios').select('*').eq('activo', true)
+    );
     if (error) throw error;
     return data;
   } catch(e) {
@@ -124,17 +136,13 @@ async function cargarUsuarios() {
 async function validarUsuario(id, pin) {
   if (!sbConfigurado) return { ok: false, error: 'Base de datos no configurada' };
   try {
-    const { data, error } = await sbClient
-      .from('usuarios')
-      .select('*')
-      .eq('id', id)
-      .eq('pin', pin)
-      .eq('activo', true)
-      .single();
+    const { data, error } = await _conTimeout(
+      sbClient.from('usuarios').select('*').eq('id', id).eq('pin', pin).eq('activo', true).single()
+    );
     if (error || !data) return { ok: false, error: 'Usuario o contraseña incorrectos' };
     return { ok: true, usuario: data };
   } catch(e) {
-    return { ok: false, error: 'Error de conexión. Intenta de nuevo.' };
+    return { ok: false, error: 'Error de conexión (tardó demasiado). Intenta de nuevo.' };
   }
 }
 

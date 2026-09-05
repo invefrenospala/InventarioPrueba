@@ -2558,21 +2558,17 @@ function ocultarLogin() {
   document.querySelector('nav').style.display    = '';
 }
 
-/** Carga los usuarios disponibles en el selector del login */
+/** Carga los usuarios disponibles como sugerencias (datalist) del campo de texto.
+ *  El campo de usuario SIEMPRE se puede escribir a mano, cargue o no la lista. */
 async function _cargarSelectorUsuarios() {
-  const sel = $('loginUsuario');
-  const reintentar = $('loginReintentar');
-  reintentar.style.display = 'none';
-  sel.innerHTML = '<option value="">Cargando usuarios...</option>';
+  const dl = $('listaUsuariosDatalist');
 
-  // Intentar cargar de Supabase
+  // Intentar cargar de Supabase (en segundo plano; no bloquea el campo)
   if (window.SB && window.SB.configurado) {
     const usuarios = await window.SB.cargarUsuarios();
     if (usuarios && usuarios.length) {
       listaUsuarios = usuarios;
-      sel.innerHTML = '<option value="">— Selecciona tu usuario —</option>' +
-        usuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
-      // Guardar en localStorage como respaldo offline
+      dl.innerHTML = usuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
       try { localStorage.setItem('fp_usuarios_v1', JSON.stringify(usuarios)); } catch(e) {}
       return;
     }
@@ -2583,24 +2579,28 @@ async function _cargarSelectorUsuarios() {
     const raw = localStorage.getItem('fp_usuarios_v1');
     if (raw) {
       listaUsuarios = JSON.parse(raw);
-      sel.innerHTML = '<option value="">— Selecciona tu usuario —</option>' +
-        listaUsuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
-      return;
+      dl.innerHTML = listaUsuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
     }
   } catch(e) {}
+  // Si nada de esto funcionó, el campo sigue vacío pero se puede escribir igual.
+}
 
-  // No hay usuarios en ningún lado: mostrar mensaje y dejar reintentar
-  sel.innerHTML = '<option value="">No se pudo conectar — toca reintentar</option>';
-  reintentar.style.display = '';
+/** Muestra u oculta el texto de la contraseña (el ojito) */
+function _alternarVerPin() {
+  const campo = $('loginPin');
+  const ojo   = $('loginOjo');
+  const verlo = campo.type === 'password';
+  campo.type  = verlo ? 'text' : 'password';
+  ojo.textContent = verlo ? '🙈' : '👁';
 }
 
 /** Intenta iniciar sesión con las credenciales ingresadas */
 async function intentarLogin() {
-  const id  = $('loginUsuario').value;
+  const id  = $('loginUsuario').value.trim();
   const pin = $('loginPin').value.trim();
   const err = $('loginError');
 
-  if (!id) { err.textContent = 'Selecciona un usuario'; return; }
+  if (!id) { err.textContent = 'Escribe tu usuario'; return; }
   if (!pin) { err.textContent = 'Escribe la contraseña'; return; }
 
   err.textContent = '';
@@ -2615,6 +2615,8 @@ async function intentarLogin() {
       return;
     }
     err.textContent = res.error;
+    $('loginPin').value = '';
+    $('loginPin').focus();
     $('btnLogin').disabled = false;
     $('btnLogin').textContent = 'Entrar';
     return;
@@ -2630,6 +2632,8 @@ async function intentarLogin() {
   err.textContent = navigator.onLine
     ? 'Usuario o contraseña incorrectos'
     : 'Sin internet. Verifica tus datos.';
+  $('loginPin').value = '';
+  $('loginPin').focus();
   $('btnLogin').disabled = false;
   $('btnLogin').textContent = 'Entrar';
 }
@@ -2715,27 +2719,40 @@ async function iniciar() {
     const raw = localStorage.getItem(CLAVE_SESION);
     if (raw) {
       const sesion = JSON.parse(raw);
-      // Cargar lista de usuarios (para el _nombreUsuario helper)
+
+      // Restaurar sesión de inmediato con lo que ya tenemos guardado,
+      // SIN esperar a la lista completa de usuarios (eso es lo que
+      // dejaba la pantalla de login pegada en "Cargando usuarios...").
+      usuarioActual = sesion;
+      const badge = $('usuario-badge');
+      badge.textContent = sesion.nombre || sesion.id;
+      badge.style.display = '';
+      $('btn-logout').style.display = '';
+      ocultarLogin();
+
+      // Continuar directo (no pedir login)
+      await _continuarInicio();
+
+      // Cargar la lista completa de usuarios en segundo plano (no bloquea
+      // el arranque); sirve para _nombreUsuario() y para el datalist de login.
       if (window.SB && window.SB.configurado) {
-        const usuarios = await window.SB.cargarUsuarios();
-        if (usuarios) listaUsuarios = usuarios;
+        window.SB.cargarUsuarios().then(usuarios => {
+          if (usuarios) {
+            listaUsuarios = usuarios;
+            const completo = usuarios.find(u => u.id === sesion.id);
+            if (completo) {
+              usuarioActual = completo;
+              badge.textContent = completo.nombre || sesion.id;
+            }
+            try { localStorage.setItem('fp_usuarios_v1', JSON.stringify(usuarios)); } catch(e) {}
+          }
+        });
       } else {
         try {
           const u = localStorage.getItem('fp_usuarios_v1');
           if (u) listaUsuarios = JSON.parse(u);
         } catch(e) {}
       }
-
-      // Restaurar sesión
-      const completo = listaUsuarios.find(u => u.id === sesion.id) || sesion;
-      usuarioActual = completo;
-      const badge = $('usuario-badge');
-      badge.textContent = completo.nombre || sesion.id;
-      badge.style.display = '';
-      $('btn-logout').style.display = '';
-
-      // Continuar directo (no pedir login)
-      await _continuarInicio();
       return;
     }
   } catch(e) {}
