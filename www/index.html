@@ -32,20 +32,23 @@
 
     <div style="margin-bottom:14px;">
       <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Usuario</div>
-      <select class="entrada" id="loginUsuario" style="width:100%;padding:12px;font-size:14px;">
-        <option value="">Cargando usuarios...</option>
-      </select>
-      <div id="loginReintentar" style="display:none;text-align:center;margin-top:8px;">
-        <a href="#" onclick="_cargarSelectorUsuarios();return false;"
-           style="color:var(--yellow);font-size:12.5px;">↻ Reintentar</a>
-      </div>
+      <input class="entrada" id="loginUsuario" type="text" list="listaUsuariosDatalist"
+             placeholder="Escribe tu usuario" autocomplete="off" autocapitalize="off"
+             style="width:100%;padding:12px;font-size:14px;"
+             onkeydown="if(event.key==='Enter')$('loginPin').focus()">
+      <datalist id="listaUsuariosDatalist"></datalist>
     </div>
 
     <div style="margin-bottom:18px;">
       <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Contraseña</div>
-      <input class="entrada" id="loginPin" type="password" placeholder="Escribe tu contraseña"
-             autocomplete="off" style="font-size:14px;"
-             onkeydown="if(event.key==='Enter')intentarLogin()">
+      <div style="position:relative;">
+        <input class="entrada" id="loginPin" type="password" placeholder="Escribe tu contraseña"
+               autocomplete="off" style="font-size:14px;width:100%;padding-right:40px;"
+               onkeydown="if(event.key==='Enter')intentarLogin()">
+        <span onclick="_alternarVerPin()" id="loginOjo"
+              style="position:absolute;right:12px;top:50%;transform:translateY(-50%);
+                     cursor:pointer;font-size:16px;color:var(--dim);user-select:none;">👁</span>
+      </div>
     </div>
 
     <button class="btn btn-amarillo" id="btnLogin" onclick="intentarLogin()">
