@@ -397,13 +397,15 @@ async function iniciarCamara() {
     return;
   }
 
-  // --- 4. Mostrar el video ---
+  // --- 4. Elegir el lector ANTES de tocar el <video> ---
+  // Importante: a ZXing (el respaldo) hay que darle la cámara APAGADA
+  // todavía en el <video>. Si nosotros ya la pusimos a reproducir, el
+  // momento exacto en que ZXing detecta "ya está lista" puede quedar
+  // desincronizado (a veces cae bien, a veces no) — eso es justo lo que
+  // causaba que funcionara solo 1 de cada 100 intentos en iPhone.
   const v = $('video');
-  v.srcObject = stream;
   $('camara-caja').classList.add('on');
-  try { await v.play(); } catch (e) { /* algunos navegadores lo hacen solos */ }
 
-  // --- 5. Preparar el lector ---
   const formatos = ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar','qr_code'];
 
   if ('BarcodeDetector' in window) {
@@ -415,8 +417,16 @@ async function iniciarCamara() {
     } catch (e) { detector = null; }
   }
 
-  if (!detector) {
-    // Respaldo: ZXing desde internet
+  if (detector) {
+    // Lector nativo del navegador: aquí sí conectamos nosotros el video,
+    // porque bucleNativo() revisa v.readyState por su cuenta y no depende
+    // de ningún evento de ZXing.
+    v.srcObject = stream;
+    try { await v.play(); } catch (e) { /* algunos navegadores lo hacen solos */ }
+  } else {
+    // Respaldo: ZXing desde internet. NO tocar v.srcObject ni v.play()
+    // aquí — decodeFromStream() en bucleZxing() se encarga de conectar
+    // la cámara al video y reproducirla él mismo, en el momento correcto.
     const listo = await cargarZxing();
     if (!listo) {
       detenerCamara();
