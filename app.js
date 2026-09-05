@@ -112,8 +112,11 @@ async function cargar() {
         guardar(); // actualizar localStorage con los datos frescos
       }
 
-      // Movimientos: la nube es la fuente de verdad
-      if (movsRemoto && movsRemoto.length) {
+      // Movimientos: la nube es la fuente de verdad, INCLUSO si quedó vacía
+      // (antes, si movsRemoto era un arreglo vacío, esta condición lo trataba
+      // como "no hay nada nuevo" y dejaba los movimientos viejos pegados
+      // en el celular para siempre, aunque ya se hubieran borrado en Supabase).
+      if (Array.isArray(movsRemoto)) {
         datos.movimientos = movsRemoto.map(m => ({
           id:       m.id,
           ref:      m.ref,

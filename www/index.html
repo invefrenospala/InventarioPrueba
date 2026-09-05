@@ -46,8 +46,14 @@
                autocomplete="off" style="font-size:14px;width:100%;padding-right:40px;"
                onkeydown="if(event.key==='Enter')intentarLogin()">
         <span onclick="_alternarVerPin()" id="loginOjo"
-              style="position:absolute;right:12px;top:50%;transform:translateY(-50%);
-                     cursor:pointer;font-size:16px;color:var(--dim);user-select:none;">👁</span>
+              style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                     cursor:pointer;color:var(--dim);display:flex;align-items:center;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </span>
       </div>
     </div>
 
