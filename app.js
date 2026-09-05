@@ -461,11 +461,19 @@ function cargarZxing() {
 async function bucleZxing() {
   try {
     zxing = new window.ZXing.BrowserMultiFormatReader();
-    zxing.decodeFromVideoElement($('video'), (resultado) => {
+    // decodeFromStream() en vez de decodeFromVideoElement(): este último
+    // espera a que ZXing detecte por sí solo que el <video> ya está listo
+    // (sus propios eventos "loadedmetadata"/"play"), y en iOS Safari esos
+    // eventos no se disparan igual que en Chrome/Android — la cámara se ve
+    // en pantalla pero ZXing nunca arranca a leer. decodeFromStream() le
+    // entrega directamente el stream que ya abrimos nosotros, sin depender
+    // de esa detección.
+    zxing.decodeFromStream(stream, $('video'), (resultado) => {
       if (resultado && escaneando) alLeer(String(resultado.getText()).trim());
     });
   } catch (e) {
     mostrarDiagnostico('El lector de respaldo falló', [
+      'Detalle técnico: ' + (e && e.message ? e.message : 'desconocido'),
       'Escribe la referencia a mano mientras tanto'
     ]);
   }
