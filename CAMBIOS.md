@@ -269,3 +269,44 @@ la de Supabase a `eliminarProductoSupabase`.
 
 Ejecuta de nuevo `supabase/migracion-costo.sql` en Supabase. Se le agregó al final la
 columna `activo`. El archivo es seguro de correr varias veces: no borra nada.
+
+---
+
+# Cambios — versión 1.7.1
+
+## El ícono de la app nunca se había reemplazado
+
+Al revisar el proyecto a fondo, encontré que el ícono que aparece en el
+celular y la pantalla de carga al abrir la app seguían siendo **la
+plantilla por defecto de Capacitor** (una X azul genérica) — no el ícono
+personalizado que se creía tener puesto. Pasaba inadvertido porque dentro
+de la app todo el diseño sí está hecho a la medida; solo el ícono del
+sistema operativo y el splash screen habían quedado sin tocar.
+
+## Logo nuevo
+
+Un disco de freno con caliper, en el amarillo y asfalto ya establecidos
+en toda la aplicación. No usa las letras "FP" para no repetir lo que ya
+tiene el turnero.
+
+Se reemplazó en todos los lugares donde debía ir:
+- Ícono adaptativo de Android (las 5 densidades, foreground + color de fondo)
+- Ícono clásico y "round" (para launchers que no soportan ícono adaptativo)
+- Splash screen, en las 11 combinaciones de densidad y orientación
+- Íconos del manifest web (192px y 512px)
+
+## Revisión de seguridad
+
+Se encontró un archivo de migración viejo (`migracion-usuarios.sql`) que
+creaba una tabla con contraseñas en texto plano y acceso público — pero
+resultó ser código muerto: la app nunca llegó a usarlo. El sistema que sí
+está en uso (`migracion-seguridad-perfiles.sql`, con autenticación real
+de Supabase) es correcto y ya estaba bien implementado. Se eliminó el
+archivo viejo del repositorio para que nadie lo corra por error más
+adelante.
+
+## Revisión de la sincronización entre dispositivos
+
+La lógica que trae los movimientos de todas las bodegas y los mantiene
+sincronizados en tiempo real quedó revisada y probada; no se encontraron
+errores.

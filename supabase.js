@@ -12,6 +12,7 @@ const SUPABASE_ANON_KEY = 'sb_publishable_BJ2ynlQ_nkNX1tEgaEsHKQ_Ck4Ddq9o';
 let sbClient       = null;
 let sbConfigurado  = false;
 let colaPendiente  = []; // movimientos sin sincronizar
+let usuarioSesion  = null; // correo de quien inició sesión (para auditoría)
 const CLAVE_COLA   = 'fp_cola_pendiente_v1';
 
 // ==========================================================
@@ -114,35 +115,130 @@ async function cargarMovimientosDesdeSupabase() {
 }
 
 // ==========================================================
-// USUARIOS Y AUTENTICACIÓN
+// USUARIOS Y AUTENTICACIÓN — Supabase Auth de verdad.
+//
+// Antes, el "login" comparaba la contraseña contra una tabla de
+// texto plano que cualquiera podía leer con la clave pública. Ahora
+// las contraseñas las guarda y verifica Supabase (nunca quedan en
+// una tabla consultable), y solo un usuario ya autenticado puede
+// leer o escribir el inventario.
+//
+// Cada perfil usa un "usuario" corto (ej. "danieltove") que por
+// debajo se traduce a un correo interno (danieltove@frenospala.app)
+// -- no hace falta que sea un correo real, Supabase Auth solo
+// necesita que sea único.
 // ==========================================================
 
-/** Carga la lista de usuarios activos */
-async function cargarUsuarios() {
+function _correoDesdeUsuario(usuario) {
+  return usuario.trim().toLowerCase().replace(/\s+/g, '') + '@frenospala.app';
+}
+
+/** Trae del directorio público (usuario, nombre) para sugerencias
+ *  en el login. No incluye nada sensible. */
+async function cargarPerfiles() {
   if (!sbConfigurado) return null;
   try {
     const { data, error } = await _conTimeout(
-      sbClient.from('usuarios').select('*').eq('activo', true)
+      sbClient.from('perfiles').select('usuario,nombre,rol').eq('activo', true)
     );
     if (error) throw error;
     return data;
   } catch(e) {
-    console.warn('No se pudo cargar usuarios de Supabase:', e.message);
+    console.warn('No se pudo cargar el directorio de perfiles:', e.message);
     return null;
   }
 }
 
-/** Valida un usuario contra la tabla de usuarios */
-async function validarUsuario(id, pin) {
+/** Inicia sesión de verdad contra Supabase Auth y trae el perfil. */
+async function iniciarSesionPerfil(usuario, clave) {
   if (!sbConfigurado) return { ok: false, error: 'Base de datos no configurada' };
   try {
     const { data, error } = await _conTimeout(
-      sbClient.from('usuarios').select('*').eq('id', id).eq('pin', pin).eq('activo', true).single()
+      sbClient.auth.signInWithPassword({
+        email: _correoDesdeUsuario(usuario),
+        password: clave
+      })
     );
-    if (error || !data) return { ok: false, error: 'Usuario o contraseña incorrectos' };
-    return { ok: true, usuario: data };
+    if (error) {
+      const msg = /invalid/i.test(error.message)
+        ? 'Usuario o contraseña incorrectos'
+        : error.message;
+      return { ok: false, error: msg };
+    }
+
+    usuarioSesion = data.user.email;
+
+    const { data: perfil } = await sbClient
+      .from('perfiles').select('usuario,nombre,rol').eq('id', data.user.id).single();
+
+    return {
+      ok: true,
+      usuario: perfil || { usuario, nombre: usuario, rol: 'operario' }
+    };
   } catch(e) {
     return { ok: false, error: 'Error de conexión (tardó demasiado). Intenta de nuevo.' };
+  }
+}
+
+/** Recupera una sesión ya iniciada (persistida por Supabase) y su perfil.
+ *  Funciona incluso sin internet, porque la sesión vive guardada en el
+ *  propio dispositivo. */
+async function recuperarSesionPerfil() {
+  if (!sbClient) return null;
+  try {
+    const { data } = await sbClient.auth.getSession();
+    if (!data || !data.session) return null;
+
+    usuarioSesion = data.session.user.email;
+
+    const { data: perfil } = await sbClient
+      .from('perfiles').select('usuario,nombre,rol').eq('id', data.session.user.id).single();
+
+    if (perfil) return perfil;
+
+    // Sesión válida pero sin fila en 'perfiles' todavía: mostrar algo razonable
+    const usuarioCorto = data.session.user.email.split('@')[0];
+    return { usuario: usuarioCorto, nombre: usuarioCorto, rol: 'operario' };
+  } catch(e) {
+    return null;
+  }
+}
+
+async function cerrarSesionSupabase() {
+  if (!sbClient) return;
+  try { await sbClient.auth.signOut(); } catch(e) {}
+  usuarioSesion = null;
+}
+
+// ==========================================================
+// REGISTRO DE ACTIVIDAD — crear, editar o dar de baja productos.
+// (Los movimientos de stock ya se auditan con su columna 'usuario';
+// esto cubre las demás acciones sobre el catálogo.)
+// ==========================================================
+
+async function registrarAuditoria(accion, detalle) {
+  if (!sbConfigurado || !usuarioSesion) return;
+  try {
+    await sbClient.from('auditoria').insert({
+      usuario: usuarioSesion.split('@')[0],
+      accion,
+      detalle: detalle || ''
+    });
+  } catch(e) {
+    console.warn('No se pudo registrar la actividad:', e.message);
+  }
+}
+
+async function verActividadReciente(limite = 60) {
+  if (!sbConfigurado) return [];
+  try {
+    const { data, error } = await sbClient
+      .from('auditoria').select('*').order('fecha', { ascending: false }).limit(limite);
+    if (error) throw error;
+    return data || [];
+  } catch(e) {
+    console.warn('No se pudo cargar la actividad:', e.message);
+    return [];
   }
 }
 
@@ -426,8 +522,12 @@ window.SB = {
   cargarProductos:    cargarProductosDesdeSupabase,
   cargarBarras:       cargarBarrasDesdeSupabase,
   cargarMovimientos:  cargarMovimientosDesdeSupabase,
-  cargarUsuarios,
-  validarUsuario,
+  cargarPerfiles,
+  iniciarSesion:      iniciarSesionPerfil,
+  recuperarSesion:    recuperarSesionPerfil,
+  cerrarSesion: cerrarSesionSupabase,
+  registrarAuditoria,
+  verActividad:       verActividadReciente,
   subirMovimiento,
   subirBarra,
   subirProductoNuevo,
@@ -437,4 +537,5 @@ window.SB = {
   actualizarIndicador,
   get pendientes()    { return colaPendiente.length; },
   get configurado()   { return sbConfigurado; },
+  get usuario()       { return usuarioSesion; },
 };

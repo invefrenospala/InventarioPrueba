@@ -465,6 +465,13 @@ nav svg{ width:19px; height:19px; }
   border:1px solid var(--line); border-radius:14px;
   padding:28px 22px; box-shadow:0 8px 30px rgba(0,0,0,.4);
 }
+.login-logo{
+  width:72px; height:72px; margin:0 auto 16px; border-radius:50%;
+  background:var(--asphalt); display:flex; align-items:center; justify-content:center;
+  box-shadow:0 0 0 1px var(--line);
+}
+.login-logo svg{ width:52px; height:52px; }
+
 .login-marca{
   font-family:'Oswald',sans-serif; font-weight:700; font-size:26px;
   letter-spacing:.5px; text-transform:uppercase; text-align:center;

@@ -867,7 +867,10 @@ function guardarNuevoProducto() {
   guardar();
 
   // Subir a Supabase
-  if (window.SB) window.SB.subirProductoNuevo(nuevo);
+  if (window.SB) {
+    window.SB.subirProductoNuevo(nuevo);
+    window.SB.registrarAuditoria('crear_producto', `${ref} — ${nombre}`);
+  }
 
   _codigoEnCurso = null;
   _refPropuesta  = null;
@@ -1027,7 +1030,10 @@ function guardarEdicionProducto() {
   guardar();
 
   // Sincronizar con Supabase
-  if (window.SB) window.SB.actualizarProducto(p, refAnterior);
+  if (window.SB) {
+    window.SB.actualizarProducto(p, refAnterior);
+    window.SB.registrarAuditoria('editar_producto', `${ref} — ${nombre}`);
+  }
 
   cerrarModal();
   avisar(`Producto "${nombre}" actualizado`);
@@ -1111,7 +1117,10 @@ function descontinuarProducto() {
   if (!p) return;
   p.activo = false;
   guardar();
-  if (window.SB) window.SB.actualizarProducto(p, p.ref);
+  if (window.SB) {
+    window.SB.actualizarProducto(p, p.ref);
+    window.SB.registrarAuditoria('descontinuar_producto', `${p.ref} — ${p.nombre}`);
+  }
   cerrarModal();
   avisar(`"${p.nombre}" quedó descontinuado`);
   abrirProducto(p);
@@ -1122,7 +1131,10 @@ function reactivarProducto() {
   if (!p) return;
   p.activo = true;
   guardar();
-  if (window.SB) window.SB.actualizarProducto(p, p.ref);
+  if (window.SB) {
+    window.SB.actualizarProducto(p, p.ref);
+    window.SB.registrarAuditoria('reactivar_producto', `${p.ref} — ${p.nombre}`);
+  }
   avisar(`"${p.nombre}" vuelve a estar activo`);
   abrirProducto(p);
 }
@@ -1154,7 +1166,10 @@ function eliminarProducto() {
   });
 
   guardar();
-  if (window.SB) window.SB.eliminarProducto(ref);
+  if (window.SB) {
+    window.SB.eliminarProducto(ref);
+    window.SB.registrarAuditoria('eliminar_producto', `${ref} — ${nombre}`);
+  }
 
   productoActual = null;
   cerrarModal();
@@ -1649,7 +1664,7 @@ function filtrarMov(t) {
 /** Resuelve el ID de un usuario a su nombre para mostrar */
 function _nombreUsuario(id) {
   if (!id) return '';
-  const u = listaUsuarios.find(x => x.id === id);
+  const u = listaUsuarios.find(x => x.usuario === id);
   return u ? u.nombre : id;
 }
 
@@ -1987,11 +2002,56 @@ function abrirDatos() {
       Cargar una copia
     </button>
 
+    ${window.SB && window.SB.configurado ? `
+    <div class="separador">ACTIVIDAD DEL PERSONAL</div>
+    <button class="btn btn-linea" onclick="abrirActividad()" style="font-size:12.5px;">
+      Ver quién hizo qué
+    </button>` : ''}
+
     <div class="separador">ZONA DE RIESGO</div>
     <button class="btn btn-rojo" style="font-size:12.5px;" onclick="borrarTodo()">
       Borrar todo y empezar de cero
     </button>
   `);
+}
+
+
+// ==========================================================
+// ACTIVIDAD DEL PERSONAL — quién creó, editó o dio de baja
+// productos (los movimientos de stock se ven en Movimientos).
+// ==========================================================
+async function abrirActividad() {
+  abrirModal(`
+    <h3>Actividad reciente</h3>
+    <p class="sub">Últimas acciones del personal sobre el catálogo.</p>
+    <div id="listaActividad" class="vacio">Cargando...</div>
+  `);
+
+  const items = await window.SB.verActividad(60);
+  const caja = $('listaActividad');
+  if (!caja) return; // el usuario ya cerró el modal
+
+  if (!items.length) {
+    caja.innerHTML = '<div class="vacio">Todavía no hay actividad registrada.</div>';
+    return;
+  }
+
+  const ETIQUETAS = {
+    crear_producto:        '🆕 Creó',
+    editar_producto:       '✏️ Editó',
+    descontinuar_producto: '📦 Descontinuó',
+    reactivar_producto:    '↩️ Reactivó',
+    eliminar_producto:     '🗑️ Eliminó',
+  };
+
+  caja.className = '';
+  caja.innerHTML = items.map(it => `
+    <div class="mov">
+      <div style="min-width:0;flex:1;">
+        <div class="t">${ETIQUETAS[it.accion] || it.accion} ${it.detalle}</div>
+        <div class="f">${it.usuario} · ${fechaCorta(it.fecha)}</div>
+      </div>
+    </div>`).join('');
 }
 
 // ==========================================================
@@ -2566,23 +2626,23 @@ function ocultarLogin() {
 async function _cargarSelectorUsuarios() {
   const dl = $('listaUsuariosDatalist');
 
-  // Intentar cargar de Supabase (en segundo plano; no bloquea el campo)
+  // Directorio público de nombres (sin nada sensible). Se puede guardar
+  // en localStorage sin problema porque no trae contraseñas.
   if (window.SB && window.SB.configurado) {
-    const usuarios = await window.SB.cargarUsuarios();
-    if (usuarios && usuarios.length) {
-      listaUsuarios = usuarios;
-      dl.innerHTML = usuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
-      try { localStorage.setItem('fp_usuarios_v1', JSON.stringify(usuarios)); } catch(e) {}
+    const perfiles = await window.SB.cargarPerfiles();
+    if (perfiles && perfiles.length) {
+      listaUsuarios = perfiles;
+      dl.innerHTML = perfiles.map(u => `<option value="${u.usuario}">${u.nombre}</option>`).join('');
+      try { localStorage.setItem('fp_perfiles_v1', JSON.stringify(perfiles)); } catch(e) {}
       return;
     }
   }
 
-  // Respaldo: usar usuarios guardados en localStorage
   try {
-    const raw = localStorage.getItem('fp_usuarios_v1');
+    const raw = localStorage.getItem('fp_perfiles_v1');
     if (raw) {
       listaUsuarios = JSON.parse(raw);
-      dl.innerHTML = listaUsuarios.map(u => `<option value="${u.id}">${u.nombre}</option>`).join('');
+      dl.innerHTML = listaUsuarios.map(u => `<option value="${u.usuario}">${u.nombre}</option>`).join('');
     }
   } catch(e) {}
   // Si nada de esto funcionó, el campo sigue vacío pero se puede escribir igual.
@@ -2622,31 +2682,27 @@ async function intentarLogin() {
   $('btnLogin').disabled = true;
   $('btnLogin').textContent = 'Verificando...';
 
-  // Primero intentar contra Supabase
-  if (window.SB && window.SB.configurado && navigator.onLine) {
-    const res = await window.SB.validarUsuario(id, pin);
-    if (res.ok) {
-      _establecerSesion(res.usuario);
-      return;
-    }
-    err.textContent = res.error;
-    $('loginPin').value = '';
-    $('loginPin').focus();
+  if (!window.SB || !window.SB.configurado) {
+    err.textContent = 'La base de datos no está configurada';
     $('btnLogin').disabled = false;
     $('btnLogin').textContent = 'Entrar';
     return;
   }
 
-  // Respaldo offline: validar contra la lista local
-  const local = listaUsuarios.find(u => u.id === id && u.pin === pin);
-  if (local) {
-    _establecerSesion(local);
+  if (!navigator.onLine) {
+    err.textContent = 'Necesitas conexión la primera vez que inicias sesión en este celular';
+    $('btnLogin').disabled = false;
+    $('btnLogin').textContent = 'Entrar';
     return;
   }
 
-  err.textContent = navigator.onLine
-    ? 'Usuario o contraseña incorrectos'
-    : 'Sin internet. Verifica tus datos.';
+  const res = await window.SB.iniciarSesion(id, pin);
+  if (res.ok) {
+    _establecerSesion(res.usuario);
+    return;
+  }
+
+  err.textContent = res.error;
   $('loginPin').value = '';
   $('loginPin').focus();
   $('btnLogin').disabled = false;
@@ -2655,13 +2711,19 @@ async function intentarLogin() {
 
 /** Establece la sesión del usuario y continúa con la carga de datos */
 function _establecerSesion(usuario) {
-  usuarioActual = usuario;
+  // Se normaliza siempre a la misma forma { id, nombre, rol } sin importar
+  // si viene recién autenticado (trae .usuario) o restaurado de
+  // localStorage (ya trae .id) -- así el resto de la app puede leer
+  // usuarioActual.id de forma consistente en cualquiera de los dos casos.
+  usuarioActual = {
+    id:     usuario.id || usuario.usuario,
+    nombre: usuario.nombre,
+    rol:    usuario.rol
+  };
 
-  // Guardar sesión en localStorage
+  // Guardar sesión en localStorage (solo nombre y rol, nunca una clave)
   try {
-    localStorage.setItem(CLAVE_SESION, JSON.stringify({
-      id: usuario.id, nombre: usuario.nombre, rol: usuario.rol
-    }));
+    localStorage.setItem(CLAVE_SESION, JSON.stringify(usuarioActual));
   } catch(e) {}
 
   // Mostrar quién está logueado en el header
@@ -2682,7 +2744,8 @@ function _establecerSesion(usuario) {
 }
 
 /** Cierra la sesión actual y vuelve al login */
-function cerrarSesion() {
+async function cerrarSesion() {
+  if (window.SB) await window.SB.cerrarSesion(); // cierra la sesión real en Supabase
   usuarioActual = null;
   try { localStorage.removeItem(CLAVE_SESION); } catch(e) {}
   $('usuario-badge').style.display = 'none';
@@ -2748,23 +2811,25 @@ async function iniciar() {
       // Continuar directo (no pedir login)
       await _continuarInicio();
 
-      // Cargar la lista completa de usuarios en segundo plano (no bloquea
-      // el arranque); sirve para _nombreUsuario() y para el datalist de login.
+      // Confirmar contra Supabase que la sesión sigue siendo válida
+      // (silencioso: si no hay internet, se sigue trabajando con lo local)
       if (window.SB && window.SB.configurado) {
-        window.SB.cargarUsuarios().then(usuarios => {
-          if (usuarios) {
-            listaUsuarios = usuarios;
-            const completo = usuarios.find(u => u.id === sesion.id);
-            if (completo) {
-              usuarioActual = completo;
-              badge.textContent = completo.nombre || sesion.id;
-            }
-            try { localStorage.setItem('fp_usuarios_v1', JSON.stringify(usuarios)); } catch(e) {}
+        window.SB.recuperarSesion().then(perfil => {
+          if (perfil) {
+            usuarioActual = { id: perfil.usuario, nombre: perfil.nombre, rol: perfil.rol };
+            badge.textContent = perfil.nombre || sesion.id;
+            try { localStorage.setItem(CLAVE_SESION, JSON.stringify(usuarioActual)); } catch(e) {}
+          }
+        });
+        window.SB.cargarPerfiles().then(perfiles => {
+          if (perfiles) {
+            listaUsuarios = perfiles;
+            try { localStorage.setItem('fp_perfiles_v1', JSON.stringify(perfiles)); } catch(e) {}
           }
         });
       } else {
         try {
-          const u = localStorage.getItem('fp_usuarios_v1');
+          const u = localStorage.getItem('fp_perfiles_v1');
           if (u) listaUsuarios = JSON.parse(u);
         } catch(e) {}
       }

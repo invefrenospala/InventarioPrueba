@@ -1,0 +1,8 @@
+Este archivo se eliminó a propósito.
+
+Creaba una tabla "usuarios" con contraseñas en texto plano y con acceso
+público (anon) de lectura total — quedó reemplazada por
+migracion-seguridad-perfiles.sql, que usa autenticación real de Supabase
+y borra esa tabla insegura con DROP TABLE usuarios CASCADE.
+
+Si en algún respaldo viejo aparece este archivo, NO lo vuelvas a correr.
